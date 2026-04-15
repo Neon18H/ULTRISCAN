@@ -1,0 +1,21 @@
+services:
+  web:
+    build: .
+    env_file: .env.example
+    ports: ["8000:8000"]
+    depends_on: [db, redis]
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: vulnsight
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+  celery:
+    build: .
+    env_file: .env.example
+    command: celery -A vulnsight worker -l info
+    depends_on: [redis, db]
