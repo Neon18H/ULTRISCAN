@@ -12,9 +12,12 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY worker.sh ./worker.sh
+COPY start.sh ./start.sh
+COPY entrypoint.sh ./entrypoint.sh
 COPY . .
-RUN chmod +x /app/start.sh /app/worker.sh \
-    && if [ -f /app/entrypoint.sh ]; then chmod +x /app/entrypoint.sh; fi
+
+RUN chmod +x /app/start.sh /app/worker.sh /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["/app/start.sh"]
