@@ -12,6 +12,7 @@ from .views import (
     ExecutiveSummaryPdfView,
     FindingListView,
     FindingsTechnicalPdfView,
+    KnowledgeBaseDetailView,
     KnowledgeBaseListView,
     ScanProfileListView,
 )
@@ -32,4 +33,5 @@ urlpatterns = [
     path('reports/executive-summary.pdf', ExecutiveSummaryPdfView.as_view(), name='reports-executive-pdf'),
     path('findings/<int:pk>/', FindingDetailView.as_view(), name='findings-detail'),
     path('knowledge-base/', KnowledgeBaseListView.as_view(), name='knowledge-base-list'),
+    path('knowledge-base/<slug:cve_id>/', KnowledgeBaseDetailView.as_view(), name='knowledge-base-detail'),
 ]

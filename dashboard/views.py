@@ -1,5 +1,6 @@
 from django.contrib import messages
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 from django.core.exceptions import PermissionDenied
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.mixins import UserPassesTestMixin
@@ -10,7 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView, View
 
-from accounts.tenancy import TenantQuerysetMixin, get_active_organization
+from accounts.tenancy import TenantQuerysetMixin, get_active_membership, get_active_organization
 from assets.models import Asset
 from findings.models import Finding
 from knowledge_base.models import AdvisorySyncJob, ExternalAdvisory, VulnerabilityRule
@@ -374,8 +375,10 @@ class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
     template_name = 'dashboard/knowledge_base_list.html'
     paginate_by = 25
 
+    severity_values = {'critical', 'high', 'medium', 'low', 'info'}
+
     def get_queryset(self):
-        return (
+        queryset = (
             ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD)
             .annotate(
                 references_count=Count('references', distinct=True),
@@ -385,15 +388,99 @@ class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
             )
             .order_by('-last_modified_at', '-published_at', '-created_at')
         )
+        return self.apply_filters(queryset)
+
+    def apply_filters(self, queryset):
+        params = self.request.GET
+
+        severity = params.get('severity', '').strip().lower()
+        if severity in self.severity_values:
+            queryset = queryset.filter(severity=severity)
+
+        cve_id = params.get('cve_id', '').strip().upper()
+        if cve_id:
+            queryset = queryset.filter(cve_id__icontains=cve_id)
+
+        description = params.get('description', '').strip()
+        if description:
+            queryset = queryset.filter(description__icontains=description)
+
+        published_from = params.get('published_from', '').strip()
+        if published_from:
+            queryset = queryset.filter(published_at__date__gte=published_from)
+
+        published_to = params.get('published_to', '').strip()
+        if published_to:
+            queryset = queryset.filter(published_at__date__lte=published_to)
+
+        modified_from = params.get('modified_from', '').strip()
+        if modified_from:
+            queryset = queryset.filter(last_modified_at__date__gte=modified_from)
+
+        modified_to = params.get('modified_to', '').strip()
+        if modified_to:
+            queryset = queryset.filter(last_modified_at__date__lte=modified_to)
+
+        score_min = self._parse_score(params.get('score_min'))
+        if score_min is not None:
+            queryset = queryset.filter(Q(cvss_score__gte=score_min) | Q(max_metric_score__gte=score_min))
+
+        score_max = self._parse_score(params.get('score_max'))
+        if score_max is not None:
+            queryset = queryset.filter(Q(cvss_score__lte=score_max) | Q(max_metric_score__lte=score_max))
+
+        has_kev = params.get('has_kev', '').strip().lower()
+        if has_kev in {'true', '1', 'yes'}:
+            queryset = queryset.filter(has_kev=True)
+        elif has_kev in {'false', '0', 'no'}:
+            queryset = queryset.filter(has_kev=False)
+
+        return queryset
+
+    def _parse_score(self, value):
+        if not value:
+            return None
+        try:
+            parsed = Decimal(str(value).strip())
+        except (InvalidOperation, ValueError):
+            return None
+        return max(Decimal('0.0'), min(Decimal('10.0'), parsed))
+
+    def get_active_filter_chips(self):
+        labels = {
+            'severity': 'Severity',
+            'cve_id': 'CVE ID',
+            'description': 'Description',
+            'published_from': 'Published from',
+            'published_to': 'Published to',
+            'modified_from': 'Modified from',
+            'modified_to': 'Modified to',
+            'score_min': 'CVSS min',
+            'score_max': 'CVSS max',
+            'has_kev': 'Has KEV',
+        }
+        chips = []
+        for key, label in labels.items():
+            value = self.request.GET.get(key, '').strip()
+            if value:
+                chips.append({'label': label, 'value': value})
+        return chips
+
+    def get_querystring_without_page(self):
+        params = self.request.GET.copy()
+        params.pop('page', None)
+        return params.urlencode()
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        base_query = ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD)
         context['kb_rules_total'] = safe_query(0, lambda: VulnerabilityRule.objects.count())
-        context['nvd_advisories_total'] = safe_query(0, lambda: ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD).count())
-        context['nvd_critical_high_total'] = safe_query(
-            0,
-            lambda: ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD, severity__in=['critical', 'high']).count(),
-        )
+        context['nvd_advisories_total'] = safe_query(0, lambda: base_query.count())
+        context['nvd_critical_total'] = safe_query(0, lambda: base_query.filter(severity='critical').count())
+        context['nvd_high_total'] = safe_query(0, lambda: base_query.filter(severity='high').count())
+        context['nvd_medium_total'] = safe_query(0, lambda: base_query.filter(severity='medium').count())
+        context['nvd_low_total'] = safe_query(0, lambda: base_query.filter(severity='low').count())
+        context['nvd_info_total'] = safe_query(0, lambda: base_query.filter(severity='info').count())
         context['nvd_last_sync_at'] = safe_query(
             None,
             lambda: AdvisorySyncJob.objects.filter(
@@ -409,10 +496,40 @@ class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
             [],
             lambda: list(AdvisorySyncJob.objects.filter(source=ExternalAdvisory.Source.NVD).order_by('-created_at')[:10]),
         )
+        context['active_filter_chips'] = self.get_active_filter_chips()
+        context['result_count'] = self.object_list.count()
+        context['current_querystring'] = self.get_querystring_without_page()
         return context
 
     def test_func(self):
-        return self.request.user.is_staff
+        if self.request.user.is_staff:
+            return True
+        membership = get_active_membership(self.request.user)
+        if not membership:
+            return False
+        return membership.role in {'owner', 'admin'}
+
+
+class KnowledgeBaseDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailView):
+    model = ExternalAdvisory
+    template_name = 'dashboard/knowledge_base_detail.html'
+    slug_field = 'cve_id'
+    slug_url_kwarg = 'cve_id'
+
+    def get_queryset(self):
+        return (
+            ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD)
+            .prefetch_related('references', 'weaknesses', 'metrics', 'cpe_matches')
+            .order_by('-last_modified_at')
+        )
+
+    def test_func(self):
+        if self.request.user.is_staff:
+            return True
+        membership = get_active_membership(self.request.user)
+        if not membership:
+            return False
+        return membership.role in {'owner', 'admin'}
 
 
 class ScanProfileListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):
