@@ -25,11 +25,11 @@ def correlate_scan_execution(scan_execution):
             if (rule.min_version or rule.max_version) and not _version_in_range(service.version, rule.min_version, rule.max_version):
                 continue
             Finding.objects.get_or_create(
-                scan_execution=scan_execution, service_finding=service, vulnerability_rule=rule,
+                organization=scan_execution.organization, scan_execution=scan_execution, service_finding=service, vulnerability_rule=rule,
                 defaults={'title': rule.title, 'description': rule.description, 'remediation': rule.remediation_template.body if rule.remediation_template else '', 'severity': rule.severity, 'confidence': rule.confidence},
             )
         for rule in MisconfigurationRule.objects.filter(port=service.port):
             Finding.objects.get_or_create(
-                scan_execution=scan_execution, service_finding=service, misconfiguration_rule=rule,
+                organization=scan_execution.organization, scan_execution=scan_execution, service_finding=service, misconfiguration_rule=rule,
                 defaults={'title': rule.title, 'description': rule.description, 'remediation': rule.remediation_template.body if rule.remediation_template else '', 'severity': rule.severity, 'confidence': rule.confidence},
             )

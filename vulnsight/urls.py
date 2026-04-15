@@ -18,6 +18,7 @@ router.register(r'knowledge-rules', VulnerabilityRuleViewSet)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('accounts/', include('accounts.urls')),
     path('api/', include(router.urls)),
     path('api/dashboard/summary/', DashboardSummaryView.as_view(), name='dashboard-summary'),
     path('', include('dashboard.urls')),

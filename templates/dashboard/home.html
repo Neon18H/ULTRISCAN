@@ -1,1 +1,13 @@
-{% extends "base.html" %}{% block content %}<div class='row g-3 mb-4'><div class='col-md-4'><div class='card'><div class='card-body'><h6>Activos totales</h6><h3>{{ assets_total }}</h3></div></div></div><div class='col-md-8'><div class='card'><div class='card-body'><h6>Escaneos recientes</h6><ul>{% for scan in recent_scans %}<li>#{{ scan.id }} - {{ scan.status }}</li>{% empty %}<li>Sin datos</li>{% endfor %}</ul></div></div></div></div><div class='card'><div class='card-body'><h6>Hallazgos por severidad</h6><ul>{% for item in findings_by_severity %}<li>{{ item.severity }}: {{ item.total }}</li>{% empty %}<li>Sin hallazgos</li>{% endfor %}</ul></div></div>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Activos totales' value=assets_total %}</div>
+  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Escaneos recientes' value=recent_scans|length %}</div>
+  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Servicios detectados' value=top_services|length %}</div>
+  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Productos vulnerables' value=top_products|length %}</div>
+</div>
+<div class="row g-3">
+  <div class="col-lg-6"><div class="card metric-card"><div class="card-body"><h6>Hallazgos por severidad</h6><ul class="mb-0">{% for item in findings_by_severity %}<li>{% include 'includes/severity_badge.html' with severity=item.severity %} {{ item.total }}</li>{% empty %}<li class="text-muted">Sin hallazgos</li>{% endfor %}</ul></div></div></div>
+  <div class="col-lg-6"><div class="card metric-card"><div class="card-body"><h6>Actividad reciente</h6><ul class="mb-0">{% for finding in recent_activity %}<li>{{ finding.title }} · {% include 'includes/severity_badge.html' with severity=finding.severity %}</li>{% empty %}<li class="text-muted">Sin actividad</li>{% endfor %}</ul></div></div></div>
+</div>
+{% endblock %}

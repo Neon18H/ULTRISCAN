@@ -1,4 +1,5 @@
 from rest_framework import serializers
+
 from .models import RawEvidence, ScanExecution, ServiceFinding, WebFinding
 
 
@@ -6,18 +7,21 @@ class RawEvidenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = RawEvidence
         fields = '__all__'
+        read_only_fields = ['organization']
 
 
 class ServiceFindingSerializer(serializers.ModelSerializer):
     class Meta:
         model = ServiceFinding
         fields = '__all__'
+        read_only_fields = ['organization']
 
 
 class WebFindingSerializer(serializers.ModelSerializer):
     class Meta:
         model = WebFinding
         fields = '__all__'
+        read_only_fields = ['organization']
 
 
 class ScanExecutionSerializer(serializers.ModelSerializer):
@@ -28,3 +32,4 @@ class ScanExecutionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ScanExecution
         fields = '__all__'
+        read_only_fields = ['organization']
