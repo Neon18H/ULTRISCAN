@@ -37,6 +37,10 @@
           <div class="fw-semibold">{{ object.service_finding.normalized_product|default:object.service_finding.product|default:'No identificado' }}</div>
         </div>
         <div class="col-md-4">
+          <div class="small text-muted">Matched from product</div>
+          <div class="fw-semibold">{{ object.correlation_trace.detected_product.normalized_product|default:object.correlation_trace.detected_product.product|default:'-' }}</div>
+        </div>
+        <div class="col-md-4">
           <div class="small text-muted">Versión detectada (raw)</div>
           <div class="fw-semibold">{{ object.service_finding.raw_version|default:object.service_finding.version|default:'-' }}</div>
         </div>
@@ -45,13 +49,22 @@
           <div class="fw-semibold">{{ object.service_finding.normalized_version|default:'-' }}</div>
         </div>
         <div class="col-md-6">
-          <div class="small text-muted">Regla que hizo match</div>
-          <div class="fw-semibold">{{ matched_rule.title|default:'No disponible' }}</div>
+          <div class="small text-muted">Rule matched</div>
+          <div class="fw-semibold">{{ object.correlation_trace.rule_title|default:matched_rule.title|default:'No disponible' }}</div>
           <div class="small text-muted">{{ matched_rule_type }}</div>
         </div>
         <div class="col-md-6">
-          <div class="small text-muted">Motivo de generación</div>
+          <div class="small text-muted">Motivo de generación / match</div>
           <div class="fw-semibold">{{ object.correlation_trace.match_reasons|join:', '|default:'No disponible' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="small text-muted">Matched from version</div>
+          <div class="fw-semibold">{{ object.correlation_trace.detected_version.version_used_for_matching|default:object.service_finding.normalized_version|default:'-' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="small text-muted">Evidence source</div>
+          <div class="fw-semibold">{{ object.correlation_trace.source_evidence.source|default:object.raw_evidence.source|default:'Service finding' }}</div>
+          <div class="small text-muted">Host {{ object.correlation_trace.source_evidence.host|default:object.service_finding.host|default:'-' }} · {{ object.correlation_trace.source_evidence.service|default:object.service_finding.service|default:'-' }}{% if object.correlation_trace.source_evidence.port %}:{{ object.correlation_trace.source_evidence.port }}{% elif object.service_finding.port %}:{{ object.service_finding.port }}{% endif %}</div>
         </div>
         <div class="col-12">
           <div class="small text-muted">Evidencia textual</div>
