@@ -56,8 +56,23 @@ def run_scan_task(self, scan_execution_id: int) -> None:
 
         mapped_profile = REQUESTED_TYPE_TO_PROFILE.get(requested_scan_type) or PROFILE_KEY_MAP.get(scan.profile.name.lower().strip(), 'discovery')
         run_result = NmapRunner().run(target=scan.asset.value, profile=mapped_profile)
+        runner_metadata = {
+            **(run_result.metadata or {}),
+            'return_code': run_result.return_code,
+            'stderr': run_result.stderr,
+            'stdout': run_result.stdout,
+            'command': run_result.command,
+        }
+
         scan.command_executed = run_result.command
-        scan.engine_metadata = {**(scan.engine_metadata or {}), 'runner_metadata': run_result.metadata}
+        scan.engine_metadata = {**(scan.engine_metadata or {}), 'runner_metadata': runner_metadata}
+
+        if runner_metadata.get('fallback_used'):
+            logger.warning(
+                'Scan %s executed with unprivileged fallback profile. Initial command: %s',
+                scan.id,
+                runner_metadata.get('initial_command'),
+            )
 
         if run_result.return_code != 0:
             raise RuntimeError(run_result.stderr or 'Nmap returned non-zero exit status')
@@ -73,7 +88,7 @@ def run_scan_task(self, scan_execution_id: int) -> None:
                     host=parsed_host.host,
                     payload=parsed_host.model_dump(),
                     raw_output=run_result.xml_output,
-                    metadata={'stderr': run_result.stderr, 'runner_metadata': run_result.metadata},
+                    metadata={'stderr': run_result.stderr, 'stdout': run_result.stdout, 'runner_metadata': runner_metadata},
                 )
                 for parsed_service in parsed_host.ports:
                     ServiceFinding.objects.create(
@@ -108,6 +123,14 @@ def run_scan_task(self, scan_execution_id: int) -> None:
         logger.exception('Scan execution %s failed', scan.id)
         scan.status = ScanExecution.Status.FAILED
         scan.error_message = str(exc)
+        scan.engine_metadata = {
+            **(scan.engine_metadata or {}),
+            'failure': {
+                'error_message': str(exc),
+                'failed_at': timezone.now().isoformat(),
+                'command_executed': scan.command_executed,
+            },
+        }
         scan.finished_at = timezone.now()
         scan.duration_seconds = int((scan.finished_at - scan.started_at).total_seconds()) if scan.started_at else 0
         scan.save(update_fields=['status', 'error_message', 'finished_at', 'duration_seconds', 'command_executed', 'engine_metadata', 'updated_at'])

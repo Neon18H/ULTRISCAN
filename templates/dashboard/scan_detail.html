@@ -5,8 +5,10 @@
     <h3>Scan #{{ object.id }}</h3>
     <p><b>Estado:</b> {{ object.status }}</p>
     <p><b>Comando:</b> <code>{{ object.command_executed|default:'-' }}</code></p>
+    <p><b>Fallback unprivileged:</b> {% if object.engine_metadata.runner_metadata.fallback_used %}Sí{% else %}No{% endif %}</p>
     <p><b>Error:</b> {{ object.error_message|default:'-' }}</p>
     <p><b>Resumen:</b> {{ object.summary|default:'-' }}</p>
+    {% if object.engine_metadata.runner_metadata.stderr %}<p><b>stderr:</b><pre>{{ object.engine_metadata.runner_metadata.stderr }}</pre></p>{% endif %}
   </div>
 </div>
 <div class="row">
