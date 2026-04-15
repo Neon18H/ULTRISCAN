@@ -318,6 +318,57 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
     model = Finding
     template_name = 'dashboard/finding_detail.html'
 
+    @staticmethod
+    def _as_dict(value):
+        return value if isinstance(value, dict) else {}
+
+    def _build_correlation_context(self, matched_rule):
+        trace = self._as_dict(self.object.correlation_trace)
+        detected_product = self._as_dict(trace.get('detected_product'))
+        detected_version = self._as_dict(trace.get('detected_version'))
+        source_evidence = self._as_dict(trace.get('source_evidence'))
+
+        service_finding = self.object.service_finding
+        raw_evidence = self.object.raw_evidence
+
+        match_reasons = trace.get('match_reasons')
+        if isinstance(match_reasons, (list, tuple)):
+            correlation_reason = ', '.join(str(item) for item in match_reasons if item)
+        elif match_reasons:
+            correlation_reason = str(match_reasons)
+        else:
+            correlation_reason = ''
+
+        return {
+            'detected_product': (
+                detected_product.get('normalized_product')
+                or detected_product.get('product')
+                or getattr(service_finding, 'normalized_product', '')
+                or getattr(service_finding, 'product', '')
+            ),
+            'detected_version': (
+                detected_version.get('version_used_for_matching')
+                or detected_version.get('normalized_version')
+                or getattr(service_finding, 'raw_version', '')
+                or getattr(service_finding, 'version', '')
+            ),
+            'normalized_version': (
+                detected_version.get('normalized_version')
+                or getattr(service_finding, 'normalized_version', '')
+            ),
+            'matched_rule': trace.get('rule_title') or getattr(matched_rule, 'title', ''),
+            'correlation_reason': correlation_reason,
+            'evidence_source': (
+                source_evidence.get('source')
+                or getattr(raw_evidence, 'source', '')
+                or 'Service finding'
+            ),
+            'evidence_host': source_evidence.get('host') or getattr(service_finding, 'host', ''),
+            'evidence_service': source_evidence.get('service') or getattr(service_finding, 'service', ''),
+            'evidence_port': source_evidence.get('port') or getattr(service_finding, 'port', ''),
+            'has_detailed_context': bool(trace),
+        }
+
     def get_queryset(self):
         organization = get_active_organization(self.request.user)
         if not organization:
@@ -349,6 +400,7 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             if self.object.end_of_life_rule
             else 'Unknown'
         )
+        context['correlation_context'] = self._build_correlation_context(matched_rule)
         context['nvd_correlation'] = safe_query(
             FindingNvdCorrelationService()._no_match_payload(self.object),
             lambda: FindingNvdCorrelationService().correlate(self.object),
