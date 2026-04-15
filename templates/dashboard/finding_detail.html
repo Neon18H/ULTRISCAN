@@ -49,6 +49,30 @@
       <p class="text-muted mb-0">No hay referencias externas asociadas.</p>
       {% endif %}
     </div>
+
+    <div class="surface-card p-3 p-xl-4 mt-3">
+      {% include 'includes/section_header.html' with eyebrow='NVD correlation' title='CVE correlacionada' %}
+      {% if nvd_advisory %}
+      <div class="d-flex gap-2 align-items-center mb-2">
+        <span class="fw-semibold">{{ nvd_advisory.cve_id }}</span>
+        {% include 'includes/severity_badge.html' with severity=nvd_advisory.severity %}
+        <span class="badge text-bg-light border">CVSS {{ nvd_advisory.cvss_score|default:'-' }}</span>
+      </div>
+      <p class="mb-2">{{ nvd_advisory.description|default:'Sin descripción.'|truncatechars:300 }}</p>
+      <div class="small text-muted mb-2">Última actualización: {{ nvd_advisory.last_modified_at|date:'Y-m-d H:i'|default:'-' }}</div>
+      {% if nvd_references %}
+      <ul class="mb-0 ps-3">
+        {% for ref in nvd_references %}
+        <li><a href="{{ ref.url }}" target="_blank" rel="noopener noreferrer">{{ ref.url|truncatechars:100 }}</a></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-muted mb-0">Sin referencias de NVD para esta CVE.</p>
+      {% endif %}
+      {% else %}
+      <p class="text-muted mb-0">Este finding aún no está correlacionado con una CVE sincronizada desde NVD.</p>
+      {% endif %}
+    </div>
   </div>
 
   <div class="col-xl-4">
