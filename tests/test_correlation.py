@@ -284,4 +284,52 @@ class CorrelationTests(TestCase):
         finding = findings[0]
         self.assertEqual(finding.raw_evidence_id, raw_evidence.id)
         self.assertEqual(finding.correlation_trace['source_evidence']['port'], 80)
+        self.assertEqual(finding.correlation_trace['source_evidence']['source'], 'nmap')
         self.assertEqual(finding.correlation_trace['detected_version']['version_used_for_matching'], '2.4.40')
+
+    def test_version_based_rule_requires_product_match(self):
+        mysql = Product.objects.create(name='MySQL', vendor='Oracle')
+        rem = RemediationTemplate.objects.create(title='r7', body='upgrade')
+        VulnerabilityRule.objects.create(
+            title='PHP unsupported branch',
+            product=Product.objects.create(name='PHP', vendor='The PHP Group'),
+            required_state='open',
+            version_operator='<=',
+            version_value='8.1.99',
+            severity='high',
+            confidence='medium',
+            description='desc',
+            remediation_template=rem,
+        )
+        VulnerabilityRule.objects.create(
+            title='MySQL outdated baseline',
+            product=mysql,
+            service_name='mysql',
+            port=3306,
+            protocol='tcp',
+            required_state='open',
+            version_operator='<',
+            version_value='8.0.0',
+            severity='medium',
+            confidence='medium',
+            description='desc',
+            remediation_template=rem,
+        )
+        ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=3306,
+            protocol='tcp',
+            state='open',
+            service='mysql',
+            product='MySQL',
+            version='5.7.36',
+            raw_version='5.7.36',
+            normalized_version='5.7.36',
+        )
+
+        findings = CorrelationService().correlate_scan_execution(self.scan)
+        finding_titles = {item.title for item in findings}
+        self.assertIn('MySQL outdated baseline', finding_titles)
+        self.assertNotIn('PHP unsupported branch', finding_titles)

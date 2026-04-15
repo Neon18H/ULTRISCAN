@@ -19,6 +19,7 @@ class CorrelationService:
         'elasticsearch': {'elasticsearch', 'wap-wsp'},
     }
     STRICT_EVIDENCE_PRODUCTS = {'wordpress', 'php'}
+    STRICT_PRODUCT_RULE_TYPES = {'vulnerability', 'eol'}
 
     def normalize_service_name(self, raw_service: str) -> str:
         value = (raw_service or '').strip().lower()
@@ -38,6 +39,16 @@ class CorrelationService:
             return alias.product.name
         direct = Product.objects.filter(name__iexact=value).first()
         return direct.name if direct else value
+
+    def _get_product_metadata(self, product_name: str) -> dict[str, str]:
+        normalized_name = self.normalize_product_name(product_name)
+        if not normalized_name:
+            return {'name': '', 'vendor': ''}
+        product = Product.objects.filter(name__iexact=normalized_name).first()
+        return {
+            'name': product.name if product else normalized_name,
+            'vendor': (product.vendor if product else '').strip(),
+        }
 
     def correlate_scan_execution(self, scan_execution):
         findings = []
@@ -176,18 +187,57 @@ class CorrelationService:
             or ''
         )
 
-    def _rule_matches_service(self, rule, service, normalized_product: str, raw_evidence=None) -> tuple[bool, list[str]]:
+    def _is_version_based_rule(self, rule) -> bool:
+        return bool(rule.version_operator and rule.version_value) or bool(rule.min_version or rule.max_version)
+
+    def _must_enforce_product_match(self, rule, rule_kind: str) -> bool:
+        if rule_kind in self.STRICT_PRODUCT_RULE_TYPES:
+            return True
+        return self._is_version_based_rule(rule)
+
+    def _product_matches_rule(
+        self,
+        *,
+        rule_product_name: str,
+        observed_product_name: str,
+        observed_vendor: str,
+        rule_vendor: str,
+    ) -> tuple[bool, str]:
+        if not rule_product_name:
+            return False, 'rule has no product configured'
+        if not observed_product_name:
+            return False, 'service has no detected product'
+        if rule_product_name == observed_product_name:
+            return True, 'product exact match'
+        if rule_vendor and observed_vendor and (rule_vendor == observed_vendor):
+            return True, f'vendor-family match ({rule_vendor})'
+        return False, f'product mismatch ({rule_product_name} != {observed_product_name})'
+
+    def _rule_matches_service(
+        self, rule, service, normalized_product: str, raw_evidence=None, *, rule_kind: str
+    ) -> tuple[bool, list[str]]:
         reasons: list[str] = []
-        rule_product = (rule.product.name or '').lower()
-        observed_product = (normalized_product or '').lower()
-        product_matches = not rule_product or (rule_product == observed_product)
-        if not product_matches:
-            exposure_driven_rule = bool(rule.service_name or rule.port or rule.protocol or rule.required_state)
-            if not exposure_driven_rule:
-                reasons.append(f'product mismatch ({rule_product} != {observed_product})')
+        observed_meta = self._get_product_metadata(normalized_product)
+        rule_product = (rule.product.name or '').strip().lower()
+        observed_product = observed_meta['name'].strip().lower()
+        rule_vendor = (rule.product.vendor or '').strip().lower()
+        observed_vendor = observed_meta['vendor'].strip().lower()
+        product_matches, product_reason = self._product_matches_rule(
+            rule_product_name=rule_product,
+            observed_product_name=observed_product,
+            observed_vendor=observed_vendor,
+            rule_vendor=rule_vendor,
+        )
+        if product_matches:
+            reasons.append(product_reason)
+        else:
+            enforce_product = self._must_enforce_product_match(rule, rule_kind)
+            if enforce_product:
+                reasons.append(product_reason)
                 return False, reasons
-            reasons.append(f'product mismatch ignored for exposure rule ({rule_product} != {observed_product})')
-        elif rule_product in self.STRICT_EVIDENCE_PRODUCTS:
+            reasons.append(f'{product_reason}; allowed for non-version exposure-style rule')
+
+        if rule_product in self.STRICT_EVIDENCE_PRODUCTS:
             evidence_tokens = self._collect_evidence_tokens(service, raw_evidence)
             explicit_product_token = rule_product in evidence_tokens
             if not explicit_product_token:
@@ -254,9 +304,11 @@ class CorrelationService:
             'rule_id': rule.id,
             'rule_title': rule.title,
             'rule_product': rule.product.name if rule.product else '',
+            'rule_vendor': rule.product.vendor if rule.product else '',
             'match_reasons': reasons,
             'source_evidence': {
                 'raw_evidence_id': raw_evidence.id if raw_evidence else None,
+                'source': raw_evidence.source if raw_evidence else '',
                 'host': service.host,
                 'port': service.port,
                 'protocol': service.protocol,
@@ -265,6 +317,7 @@ class CorrelationService:
             'detected_product': {
                 'product': service.product,
                 'normalized_product': service.normalized_product or '',
+                'vendor': self._get_product_metadata(service.normalized_product or service.product).get('vendor', ''),
             },
             'detected_version': {
                 'raw_version': service.raw_version or service.version,
@@ -295,7 +348,18 @@ class CorrelationService:
     def _apply_vulnerability_rules(self, scan_execution, service, normalized_product: str, raw_evidence=None):
         created = []
         for rule in VulnerabilityRule.objects.select_related('remediation_template', 'product').prefetch_related('references').all():
-            matched, reasons = self._rule_matches_service(rule, service, normalized_product, raw_evidence)
+            logger.debug(
+                'Evaluating rule [vulnerability] scan=%s service=%s detected_product=%s detected_version=%s rule=%s rule_product=%s',
+                scan_execution.id,
+                service.id,
+                normalized_product or service.product,
+                self._get_version_candidate(service),
+                rule.title,
+                rule.product.name if rule.product else '',
+            )
+            matched, reasons = self._rule_matches_service(
+                rule, service, normalized_product, raw_evidence, rule_kind='vulnerability'
+            )
             if not matched:
                 logger.debug(
                     'Rule miss [vulnerability] rule=%s service=%s scan=%s reasons=%s',
@@ -335,7 +399,18 @@ class CorrelationService:
     def _apply_misconfiguration_rules(self, scan_execution, service, normalized_product: str, raw_evidence=None):
         created = []
         for rule in MisconfigurationRule.objects.select_related('remediation_template', 'product').prefetch_related('references').all():
-            matched, reasons = self._rule_matches_service(rule, service, normalized_product, raw_evidence)
+            logger.debug(
+                'Evaluating rule [misconfiguration] scan=%s service=%s detected_product=%s detected_version=%s rule=%s rule_product=%s',
+                scan_execution.id,
+                service.id,
+                normalized_product or service.product,
+                self._get_version_candidate(service),
+                rule.title,
+                rule.product.name if rule.product else '',
+            )
+            matched, reasons = self._rule_matches_service(
+                rule, service, normalized_product, raw_evidence, rule_kind='misconfiguration'
+            )
             if not matched:
                 logger.debug(
                     'Rule miss [misconfiguration] rule=%s service=%s scan=%s reasons=%s',
@@ -375,7 +450,18 @@ class CorrelationService:
     def _apply_eol_rules(self, scan_execution, service, normalized_product: str, raw_evidence=None):
         created = []
         for rule in EndOfLifeRule.objects.select_related('remediation_template', 'product').prefetch_related('references').all():
-            matched, reasons = self._rule_matches_service(rule, service, normalized_product, raw_evidence)
+            logger.debug(
+                'Evaluating rule [eol] scan=%s service=%s detected_product=%s detected_version=%s rule=%s rule_product=%s',
+                scan_execution.id,
+                service.id,
+                normalized_product or service.product,
+                self._get_version_candidate(service),
+                rule.title,
+                rule.product.name if rule.product else '',
+            )
+            matched, reasons = self._rule_matches_service(
+                rule, service, normalized_product, raw_evidence, rule_kind='eol'
+            )
             if not matched:
                 logger.debug(
                     'Rule miss [eol] rule=%s service=%s scan=%s reasons=%s',
