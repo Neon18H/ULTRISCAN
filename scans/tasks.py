@@ -26,7 +26,7 @@ def _map_profile_name(profile_name: str) -> str:
 
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=10, retry_kwargs={'max_retries': 2})
-def run_scan_pipeline_task(self, scan_execution_id: int) -> None:
+def run_scan_task(self, scan_execution_id: int) -> None:
     scan = ScanExecution.objects.select_related('asset', 'profile', 'organization').get(id=scan_execution_id)
     logger.info('Starting scan execution %s for org %s', scan.id, scan.organization_id)
     scan.status = ScanExecution.Status.RUNNING
@@ -91,3 +91,7 @@ def run_scan_pipeline_task(self, scan_execution_id: int) -> None:
         scan.finished_at = timezone.now()
         scan.save(update_fields=['status', 'error_message', 'finished_at', 'command_executed', 'engine_metadata', 'updated_at'])
         raise
+
+
+# Backward-compatible alias.
+run_scan_pipeline_task = run_scan_task

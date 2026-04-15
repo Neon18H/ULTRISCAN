@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="mb-1">Scan Executions</h2>
+    <p class="text-muted mb-0">Seguimiento de ejecuciones por organización.</p>
+  </div>
+</div>
+
+<div class="card metric-card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-enterprise align-middle mb-0">
+        <thead>
+          <tr><th>ID</th><th>Asset</th><th>Profile</th><th>Status</th><th>Fecha</th></tr>
+        </thead>
+        <tbody>
+          {% for obj in object_list %}
+          <tr>
+            <td><a href="{% url 'scans-detail' obj.id %}">#{{ obj.id }}</a></td>
+            <td>{{ obj.asset.name }}</td>
+            <td>{{ obj.profile.name }}</td>
+            <td><span class="badge status-badge status-{{ obj.status }}">{{ obj.get_status_display }}</span></td>
+            <td>{{ obj.created_at|date:'Y-m-d H:i' }}</td>
+          </tr>
+          {% empty %}
+            <tr><td colspan="5" class="text-muted">No hay escaneos.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

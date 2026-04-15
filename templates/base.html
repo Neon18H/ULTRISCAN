@@ -8,9 +8,28 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
   <title>VulnSight</title>
   <style>
-    body{background:#f3f6fb;color:#1a2233}.sidebar{width:260px;min-height:100vh;background:#111827;position:fixed;left:0;top:0}.content-wrap{margin-left:260px}.nav-link{color:#9ca3af}.nav-link.active,.nav-link:hover{color:#fff;background:#1f2937;border-radius:.5rem}.metric-card{border:0;border-radius:14px;box-shadow:0 4px 16px rgba(17,24,39,.06)}
-    .severity-badge{font-size:.75rem;font-weight:600;text-transform:uppercase}
-    .severity-critical{background:#7f1d1d}.severity-high{background:#b45309}.severity-medium{background:#b59f3b}.severity-low{background:#1d4ed8}.severity-info{background:#0f766e}
+    :root{
+      --bg:#f4f7fb;--panel:#ffffff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--brand:#0b3a75;
+      --status-pending:#64748b;--status-queued:#1d4ed8;--status-running:#0f766e;--status-completed:#166534;--status-failed:#b91c1c;--status-cancelled:#6b7280;
+    }
+    body{background:var(--bg);color:var(--ink)}
+    .sidebar{width:280px;min-height:100vh;background:linear-gradient(180deg,#0b1426,#0b1f3a);position:fixed;left:0;top:0;border-right:1px solid rgba(148,163,184,.15)}
+    .content-wrap{margin-left:280px}
+    .nav-link{color:#94a3b8;padding:.6rem .75rem}
+    .nav-link.active,.nav-link:hover{color:#e2e8f0;background:rgba(30,41,59,.75);border-radius:.6rem}
+    .metric-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 24px rgba(15,23,42,.04)}
+    .table-enterprise thead th{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom-color:var(--line)}
+    .table-enterprise td{border-bottom-color:#edf2f7}
+    .severity-badge{font-size:.74rem;font-weight:700;text-transform:uppercase}
+    .severity-critical{background:#7f1d1d}.severity-high{background:#9a3412}.severity-medium{background:#a16207}.severity-low{background:#1d4ed8}.severity-info{background:#0f766e}
+    .status-badge{font-size:.72rem;font-weight:700;text-transform:uppercase;border-radius:999px;padding:.35rem .65rem}
+    .status-pending{background:rgba(100,116,139,.18);color:var(--status-pending)}
+    .status-queued{background:rgba(29,78,216,.15);color:var(--status-queued)}
+    .status-running{background:rgba(15,118,110,.18);color:var(--status-running)}
+    .status-completed{background:rgba(22,101,52,.18);color:var(--status-completed)}
+    .status-failed{background:rgba(185,28,28,.15);color:var(--status-failed)}
+    .status-cancelled{background:rgba(107,114,128,.18);color:var(--status-cancelled)}
+    .page-header h2{font-size:1.45rem;font-weight:700}
   </style>
 </head>
 <body>

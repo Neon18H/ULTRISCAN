@@ -1,13 +1,68 @@
 {% extends "base.html" %}
 {% block content %}
+<div class="page-header mb-4">
+  <h2 class="mb-1">Dashboard</h2>
+  <p class="text-muted mb-0">Vista ejecutiva de exposición, cobertura y actividad.</p>
+</div>
+
 <div class="row g-3 mb-4">
   <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Activos totales' value=assets_total %}</div>
   <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Escaneos recientes' value=recent_scans|length %}</div>
   <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Servicios detectados' value=top_services|length %}</div>
-  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Productos vulnerables' value=top_products|length %}</div>
+  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Productos detectados' value=top_products|length %}</div>
 </div>
-<div class="row g-3">
-  <div class="col-lg-6"><div class="card metric-card"><div class="card-body"><h6>Hallazgos por severidad</h6><ul class="mb-0">{% for item in findings_by_severity %}<li>{% include 'includes/severity_badge.html' with severity=item.severity %} {{ item.total }}</li>{% empty %}<li class="text-muted">Sin hallazgos</li>{% endfor %}</ul></div></div></div>
-  <div class="col-lg-6"><div class="card metric-card"><div class="card-body"><h6>Actividad reciente</h6><ul class="mb-0">{% for finding in recent_activity %}<li>{{ finding.title }} · {% include 'includes/severity_badge.html' with severity=finding.severity %}</li>{% empty %}<li class="text-muted">Sin actividad</li>{% endfor %}</ul></div></div></div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card metric-card h-100">
+      <div class="card-body">
+        <h6>Hallazgos por severidad</h6>
+        <ul class="mb-0">
+          {% for item in findings_by_severity %}
+            <li class="d-flex justify-content-between mb-1"><span>{% include 'includes/severity_badge.html' with severity=item.severity %}</span><span>{{ item.total }}</span></li>
+          {% empty %}
+            <li class="text-muted">Sin hallazgos</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card metric-card h-100">
+      <div class="card-body">
+        <h6>Actividad reciente</h6>
+        <ul class="mb-0">
+          {% for finding in recent_activity %}
+            <li>{{ finding.title }} · {% include 'includes/severity_badge.html' with severity=finding.severity %}</li>
+          {% empty %}
+            <li class="text-muted">Sin actividad</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card metric-card">
+  <div class="card-body">
+    <h6>Últimos escaneos</h6>
+    <div class="table-responsive">
+      <table class="table table-enterprise align-middle mb-0">
+        <thead><tr><th>ID</th><th>Activo</th><th>Estado</th><th>Fecha</th></tr></thead>
+        <tbody>
+          {% for scan in recent_scans %}
+            <tr>
+              <td><a href="{% url 'scans-detail' scan.id %}">#{{ scan.id }}</a></td>
+              <td>{{ scan.asset.name }}</td>
+              <td><span class="badge status-badge status-{{ scan.status }}">{{ scan.get_status_display }}</span></td>
+              <td>{{ scan.created_at|date:'Y-m-d H:i' }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="text-muted">Sin escaneos recientes.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 {% endblock %}

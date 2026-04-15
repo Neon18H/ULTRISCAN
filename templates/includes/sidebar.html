@@ -1,14 +1,20 @@
 <aside class="sidebar text-white p-3">
-  <h4 class="mb-4">VulnSight</h4>
+  <div class="d-flex align-items-center gap-2 mb-4">
+    <i class="bi bi-shield-lock fs-5"></i>
+    <h4 class="mb-0">VulnSight</h4>
+  </div>
   <div class="small text-secondary mb-3">{{ current_organization.name|default:'Sin organización' }}</div>
   <ul class="nav flex-column gap-1">
-    <li><a class="nav-link" href="/">Dashboard</a></li>
-    <li><a class="nav-link" href="/assets/">Assets</a></li>
-    <li><a class="nav-link" href="/scan-profiles/">Scan Profiles</a></li>
-    <li><a class="nav-link" href="/scans/">Scans</a></li>
-    <li><a class="nav-link" href="/findings/">Findings</a></li>
-    <li><a class="nav-link" href="/knowledge-base/">Knowledge Base</a></li>
-    <li><a class="nav-link" href="/accounts/organization/team/">Team</a></li>
-    <li><a class="nav-link" href="/accounts/organization/settings/">Settings</a></li>
+    <li><a class="nav-link" href="/"><i class="bi bi-grid-1x2 me-2"></i>Dashboard</a></li>
+    <li><a class="nav-link" href="/assets/"><i class="bi bi-hdd-network me-2"></i>Assets</a></li>
+    <li><a class="nav-link" href="/scan-profiles/"><i class="bi bi-sliders me-2"></i>Scan Profiles</a></li>
+    <li><a class="nav-link" href="/scans/"><i class="bi bi-activity me-2"></i>Scans</a></li>
+    <li><a class="nav-link" href="/findings/"><i class="bi bi-exclamation-diamond me-2"></i>Findings</a></li>
+    <li><a class="nav-link" href="/knowledge-base/"><i class="bi bi-book me-2"></i>Knowledge Base</a></li>
+  </ul>
+  <hr class="border-secondary-subtle my-3">
+  <ul class="nav flex-column gap-1">
+    <li><a class="nav-link" href="/accounts/organization/team/"><i class="bi bi-people me-2"></i>Team</a></li>
+    <li><a class="nav-link" href="/accounts/organization/settings/"><i class="bi bi-gear me-2"></i>Settings</a></li>
   </ul>
 </aside>

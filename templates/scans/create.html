@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header mb-4">
+  <h2 class="mb-1">Run Scan</h2>
+  <p class="text-muted mb-0">Configura un escaneo para el activo seleccionado.</p>
+</div>
+
+<div class="card metric-card">
+  <div class="card-body">
+    <div class="row g-4">
+      <div class="col-lg-5">
+        <h6 class="text-uppercase text-muted">Activo seleccionado</h6>
+        <p class="mb-1"><strong>{{ asset.name }}</strong></p>
+        <p class="mb-1 text-muted">{{ asset.asset_type }} · {{ asset.value }}</p>
+        <a href="{% url 'assets-detail' asset.id %}" class="small">Ver detalle del activo</a>
+      </div>
+      <div class="col-lg-7">
+        <form method="post" class="row g-3">
+          {% csrf_token %}
+          <input type="hidden" name="asset_id" value="{{ asset.id }}">
+          <div class="col-12">
+            <label class="form-label">{{ form.profile.label }}</label>
+            {{ form.profile }}
+            {% if form.profile.errors %}<div class="text-danger small mt-1">{{ form.profile.errors }}</div>{% endif %}
+          </div>
+          <div class="col-12 d-flex justify-content-end gap-2">
+            <a href="{% url 'assets-detail' asset.id %}" class="btn btn-outline-secondary">Cancelar</a>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-rocket-takeoff me-1"></i>Ejecutar escaneo</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
