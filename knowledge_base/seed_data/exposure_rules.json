@@ -1,6 +1,6 @@
 [
   {
-    "title": "FTP service exposed on port 21",
+    "title": "FTP service exposed",
     "product": "FTP",
     "service_name": "ftp",
     "port": 21,
@@ -14,7 +14,7 @@
     "remediation": "restrict_service_exposure"
   },
   {
-    "title": "SSH service exposed on port 22",
+    "title": "SSH service exposed",
     "product": "OpenSSH",
     "service_name": "ssh",
     "port": 22,
@@ -42,7 +42,7 @@
     "remediation": "restrict_service_exposure"
   },
   {
-    "title": "SMB service exposed on port 445",
+    "title": "SMB exposed",
     "product": "SMB / Microsoft-DS",
     "service_name": "microsoft-ds",
     "port": 445,
@@ -56,7 +56,7 @@
     "remediation": "enforce_network_segmentation"
   },
   {
-    "title": "MSSQL service exposed on port 1433",
+    "title": "MSSQL exposed",
     "product": "Microsoft SQL Server",
     "service_name": "ms-sql-s",
     "port": 1433,
@@ -70,7 +70,7 @@
     "remediation": "enforce_network_segmentation"
   },
   {
-    "title": "PPTP service exposed on port 1723",
+    "title": "PPTP exposed",
     "product": "PPTP",
     "service_name": "pptp",
     "port": 1723,
@@ -84,7 +84,7 @@
     "remediation": "place_service_behind_vpn_or_allowlist"
   },
   {
-    "title": "MySQL service exposed on port 3306",
+    "title": "MySQL exposed",
     "product": "MySQL",
     "service_name": "mysql",
     "port": 3306,
@@ -98,11 +98,11 @@
     "remediation": "enforce_network_segmentation"
   },
   {
-    "title": "SIP service exposed on port 5060",
+    "title": "SIP exposed",
     "product": "SIP",
     "service_name": "sip",
     "port": 5060,
-    "protocol": "udp",
+    "protocol": "",
     "required_state": "open",
     "evidence_type": "network_exposure",
     "severity": "medium",
@@ -112,9 +112,9 @@
     "remediation": "restrict_service_exposure"
   },
   {
-    "title": "Alternate HTTP-like service exposed on port 8088",
+    "title": "alternate HTTP service exposed",
     "product": "Generic HTTP Service",
-    "service_name": "http",
+    "service_name": "",
     "port": 8088,
     "protocol": "tcp",
     "required_state": "open",
@@ -126,7 +126,7 @@
     "remediation": "place_service_behind_vpn_or_allowlist"
   },
   {
-    "title": "Alternate HTTPS/admin service exposed on port 8443",
+    "title": "HTTPS-alt exposed",
     "product": "Generic HTTPS Service",
     "service_name": "https-alt",
     "port": 8443,
@@ -140,9 +140,9 @@
     "remediation": "place_service_behind_vpn_or_allowlist"
   },
   {
-    "title": "Elasticsearch API exposed on port 9200",
+    "title": "Port 9200 exposed",
     "product": "Elasticsearch",
-    "service_name": "elasticsearch",
+    "service_name": "",
     "port": 9200,
     "protocol": "tcp",
     "required_state": "open",
