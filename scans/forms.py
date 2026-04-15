@@ -15,7 +15,7 @@ SCAN_TYPE_CHOICES = [
 
 SCAN_TYPE_HELP = {
     'nmap_discovery': 'Descubrimiento rápido de hosts y puertos más comunes.',
-    'nmap_full_tcp_safe': 'Escaneo TCP completo con detección de versiones en modo seguro.',
+    'nmap_full_tcp_safe': 'Escaneo TCP seguro de los 1000 puertos más comunes con detección de versiones.',
     'web_basic': 'Fingerprinting de servicios web y superficie HTTP/HTTPS.',
     'gobuster_directory': 'Enumeración de directorios y rutas web (pendiente de motor dedicado).',
     'wordpress_scan': 'Detección de instalación WordPress y chequeos básicos.',
