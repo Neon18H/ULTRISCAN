@@ -36,6 +36,16 @@ def _recent_filters(hours_back: int, force_hours_window: bool = False) -> dict[s
     }
 
 
+def _backfill_filters(hours_back: int):
+    end = timezone.now()
+    start = end - timedelta(hours=hours_back)
+    filters = {
+        'pubStartDate': start.isoformat(timespec='seconds').replace('+00:00', 'Z'),
+        'pubEndDate': end.isoformat(timespec='seconds').replace('+00:00', 'Z'),
+    }
+    return filters, start, end
+
+
 @shared_task(bind=True)
 def sync_nvd_recent_task(
     self,
@@ -75,4 +85,36 @@ def sync_nvd_cves_task(
         resume=resume,
     )
     run_sync_job(job=job, client=NVDClient(), filters=filters or {}, page_size=page_size, limit=limit)
+    return job.id
+
+
+@shared_task(bind=True)
+def sync_nvd_backfill_task(
+    self,
+    *,
+    hours_back: int = 24 * 365,
+    page_size: int = 0,
+    max_pages: int | None = None,
+    resume: bool = True,
+    stop_at_existing: bool = False,
+) -> int:
+    safe_hours_back = max(int(hours_back), 1)
+    filters, window_start, window_end = _backfill_filters(hours_back=safe_hours_back)
+    job = create_sync_job(
+        command='sync_nvd_backfill',
+        job_type='nvd_backfill',
+        filters=filters,
+        page_size=page_size,
+        resume=resume,
+    )
+    run_sync_job(
+        job=job,
+        client=NVDClient(),
+        filters=filters,
+        page_size=page_size,
+        max_pages=max_pages,
+        stop_at_existing=stop_at_existing,
+        window_start=window_start,
+        window_end=window_end,
+    )
     return job.id

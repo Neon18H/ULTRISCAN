@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import UTC
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -502,14 +502,26 @@ def create_sync_job(
             .first()
         )
         if previous:
+            was_completed = previous.status == AdvisorySyncJob.Status.COMPLETED
             previous.filters = clean_filters
             previous.filters_json = clean_filters
             previous.page_size = page_size or previous.page_size
             previous.status = AdvisorySyncJob.Status.PENDING
             previous.error_message = ''
             previous.last_error = ''
+            if not was_completed:
+                previous.finished_at = None
             previous.save(
-                update_fields=['filters', 'filters_json', 'page_size', 'status', 'error_message', 'last_error', 'updated_at']
+                update_fields=[
+                    'filters',
+                    'filters_json',
+                    'page_size',
+                    'status',
+                    'error_message',
+                    'last_error',
+                    'finished_at',
+                    'updated_at',
+                ]
             )
             return previous
 
@@ -519,6 +531,7 @@ def create_sync_job(
         filters=clean_filters,
         filters_json=clean_filters,
         status=AdvisorySyncJob.Status.PENDING,
+        current_start_index=start_index,
         last_start_index=start_index,
         page_size=page_size,
     )
@@ -531,10 +544,15 @@ def run_sync_job(
     filters: dict[str, Any] | None = None,
     page_size: int = 0,
     limit: int | None = None,
+    max_pages: int | None = None,
+    stop_at_existing: bool = False,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> AdvisorySyncJob:
     clean_filters = _normalize_job_filters(filters or job.filters_json)
     requested_page_size = int(page_size or job.page_size or 0)
     limit = int(limit) if limit else None
+    max_pages = int(max_pages) if max_pages else None
 
     if job.status == AdvisorySyncJob.Status.COMPLETED:
         return job
@@ -545,7 +563,22 @@ def run_sync_job(
     job.page_size = requested_page_size
     job.filters = clean_filters
     job.filters_json = clean_filters
-    job.save(update_fields=['started_at', 'status', 'page_size', 'filters', 'filters_json', 'updated_at'])
+    if window_start:
+        job.current_window_start = window_start
+    if window_end:
+        job.current_window_end = window_end
+    job.save(
+        update_fields=[
+            'started_at',
+            'status',
+            'page_size',
+            'filters',
+            'filters_json',
+            'current_window_start',
+            'current_window_end',
+            'updated_at',
+        ]
+    )
 
     created_count = job.created_count
     updated_count = job.updated_count
@@ -554,8 +587,10 @@ def run_sync_job(
     errors_count = job.error_count
     error_messages: list[str] = [job.last_error] if job.last_error else []
 
-    current_start_index = int(job.last_start_index or 0)
+    current_start_index = int(job.current_start_index or job.last_start_index or 0)
     processed_this_run = 0
+    processed_pages = int(job.processed_pages or 0)
+    stop_requested = False
 
     try:
         for page in client.iter_cve_pages(
@@ -563,12 +598,17 @@ def run_sync_job(
             start_index=current_start_index,
             **clean_filters,
         ):
+            page_fetched = 0
+            page_created = 0
+            page_updated = 0
+            page_ignored = 0
             page_items = page['vulnerabilities']
             for entry in page_items:
                 cve = entry.get('cve') or {}
                 cve_id = cve.get('id')
                 if not cve_id:
                     ignored_count += 1
+                    page_ignored += 1
                     logger.warning('Skipping NVD entry without CVE id. entry_keys=%s', list(entry.keys()))
                     continue
 
@@ -576,8 +616,10 @@ def run_sync_job(
                     break
 
                 fetched_count += 1
+                page_fetched += 1
                 processed_this_run += 1
                 try:
+                    exists_before = ExternalAdvisory.objects.filter(cve_id=cve_id).exists()
                     cvss_data = _extract_cvss(cve)
                     references, refs_original_count = _extract_references(cve)
                     metrics = _extract_metrics(cve)
@@ -617,8 +659,12 @@ def run_sync_job(
 
                     if created:
                         created_count += 1
+                        page_created += 1
                     else:
                         updated_count += 1
+                        page_updated += 1
+                        if stop_at_existing and exists_before:
+                            stop_requested = True
                 except Exception as exc:
                     errors_count += 1
                     error_detail = f'{cve_id}: {exc}'
@@ -626,8 +672,12 @@ def run_sync_job(
                     logger.exception('Failed to sync NVD advisory cve_id=%s', cve_id)
 
             current_start_index = page['start_index'] + len(page_items)
+            processed_pages += 1
+            job.current_start_index = current_start_index
             job.last_start_index = current_start_index
+            job.processed_pages = processed_pages
             job.total_fetched = fetched_count
+            job.fetched_count = fetched_count
             job.total_created = created_count
             job.total_updated = updated_count
             job.total_errors = errors_count
@@ -638,8 +688,11 @@ def run_sync_job(
             job.last_error = '; '.join(error_messages[-3:])
             job.save(
                 update_fields=[
+                    'current_start_index',
                     'last_start_index',
+                    'processed_pages',
                     'total_fetched',
+                    'fetched_count',
                     'total_created',
                     'total_updated',
                     'total_errors',
@@ -651,8 +704,26 @@ def run_sync_job(
                     'updated_at',
                 ]
             )
+            logger.info(
+                (
+                    'NVD page synced job_id=%s page=%s startIndex=%s fetched=%s '
+                    'created=%s updated=%s ignored=%s progress_fetched=%s'
+                ),
+                job.id,
+                processed_pages,
+                page['start_index'],
+                page_fetched,
+                page_created,
+                page_updated,
+                page_ignored,
+                fetched_count,
+            )
 
             if limit is not None and processed_this_run >= limit:
+                break
+            if max_pages is not None and processed_pages >= max_pages:
+                break
+            if stop_requested:
                 break
 
         job.status = AdvisorySyncJob.Status.COMPLETED
@@ -670,6 +741,7 @@ def run_sync_job(
         raise
     finally:
         job.total_fetched = fetched_count
+        job.fetched_count = fetched_count
         job.total_created = created_count
         job.total_updated = updated_count
         job.total_errors = errors_count
@@ -685,6 +757,7 @@ def run_sync_job(
                 'error_message',
                 'last_error',
                 'total_fetched',
+                'fetched_count',
                 'total_created',
                 'total_updated',
                 'total_errors',
