@@ -9,7 +9,9 @@
     <li><a class="nav-link" href="/assets/"><i class="bi bi-hdd-network me-2"></i>Assets</a></li>
     <li><a class="nav-link" href="/scans/"><i class="bi bi-activity me-2"></i>Scans</a></li>
     <li><a class="nav-link" href="/findings/"><i class="bi bi-exclamation-diamond me-2"></i>Findings</a></li>
+    {% if user.is_staff %}
     <li><a class="nav-link" href="/knowledge-base/"><i class="bi bi-book me-2"></i>Knowledge Base</a></li>
+    {% endif %}
     <li><a class="nav-link" href="/accounts/organization/team/"><i class="bi bi-people me-2"></i>Organization / Team</a></li>
   </ul>
   <hr class="border-secondary-subtle my-3">
