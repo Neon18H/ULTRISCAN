@@ -72,13 +72,13 @@ class NVDClient:
 
         raise NVDClientError('NVD request could not complete')
 
-    def iter_cves(self, results_per_page: int | None = None, **filters: Any):
-        start_index = int(filters.pop('startIndex', 0) or 0)
+    def iter_cve_pages(self, results_per_page: int | None = None, start_index: int = 0, **filters: Any):
+        current_start_index = int(start_index or filters.pop('startIndex', 0) or 0)
         results_per_page = int(results_per_page or settings.NVD_SYNC_PAGE_SIZE)
 
         while True:
             params = {
-                'startIndex': start_index,
+                'startIndex': current_start_index,
                 'resultsPerPage': results_per_page,
             }
             allowed_filters = {'cveId', 'cpeName', 'hasKev', 'lastModStartDate', 'lastModEndDate'}
@@ -93,9 +93,18 @@ class NVDClient:
             if not vulnerabilities:
                 break
 
-            for item in vulnerabilities:
-                yield item
+            yield {
+                'start_index': current_start_index,
+                'vulnerabilities': vulnerabilities,
+                'total_results': total_results,
+                'results_per_page': results_per_page,
+            }
 
-            start_index += len(vulnerabilities)
-            if start_index >= total_results:
+            current_start_index += len(vulnerabilities)
+            if current_start_index >= total_results:
                 break
+
+    def iter_cves(self, results_per_page: int | None = None, **filters: Any):
+        for page in self.iter_cve_pages(results_per_page=results_per_page, **filters):
+            for item in page['vulnerabilities']:
+                yield item

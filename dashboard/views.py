@@ -396,10 +396,18 @@ class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
         )
         context['nvd_last_sync_at'] = safe_query(
             None,
-            lambda: AdvisorySyncJob.objects.filter(source=ExternalAdvisory.Source.NVD, finished_at__isnull=False)
-            .order_by('-finished_at')
-            .values_list('finished_at', flat=True)
+            lambda: AdvisorySyncJob.objects.filter(
+                source=ExternalAdvisory.Source.NVD,
+                status=AdvisorySyncJob.Status.COMPLETED,
+                last_successful_sync_at__isnull=False,
+            )
+            .order_by('-last_successful_sync_at')
+            .values_list('last_successful_sync_at', flat=True)
             .first(),
+        )
+        context['nvd_sync_jobs'] = safe_query(
+            [],
+            lambda: list(AdvisorySyncJob.objects.filter(source=ExternalAdvisory.Source.NVD).order_by('-created_at')[:10]),
         )
         return context
 
