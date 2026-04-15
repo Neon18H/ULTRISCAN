@@ -179,3 +179,36 @@ python manage.py showmigrations
   - `GET /reports/executive-summary.pdf` (Executive Summary)
   - `GET /findings/export/technical-pdf/` (Technical Findings filtrado)
 - Ambos reportes respetan multitenancy (organización activa del usuario autenticado).
+
+
+## Integración NVD (Knowledge Base interna)
+Se incorporó una integración oficial con **NVD CVE API 2.0** para poblar la base local (`knowledge_base`) con CVEs y metadatos relacionados.
+
+### Objetivo de diseño
+- **No** consultar NVD en tiempo real durante cada scan.
+- **Sí** sincronizar CVEs a PostgreSQL y reutilizarlos en la correlación local.
+- Mantener el motor actual de correlación por exposición y enriquecerlo progresivamente.
+
+### Endpoints
+- CVE API actual: `https://services.nvd.nist.gov/rest/json/cves/2.0`
+- Estructura preparada para futura extensión de historial: `https://services.nvd.nist.gov/rest/json/cvehistory/2.0`
+
+### Variables de entorno
+- `NVD_API_KEY` (opcional, recomendado para cuotas más amplias)
+- `NVD_SYNC_PAGE_SIZE` (opcional, default `200`)
+
+### Comandos de sincronización
+```bash
+python manage.py sync_nvd_sample
+python manage.py sync_nvd_cves
+python manage.py sync_nvd_recent
+```
+
+Opciones útiles:
+- `sync_nvd_cves --cve-id CVE-2024-12345`
+- `sync_nvd_cves --cpe-name cpe:2.3:a:apache:http_server:*:*:*:*:*:*:*:*`
+- `sync_nvd_cves --has-kev`
+- `sync_nvd_cves --last-mod-start-date 2026-04-01T00:00:00Z --last-mod-end-date 2026-04-15T00:00:00Z`
+- `sync_nvd_recent --hours 24`
+
+Todos estos comandos hacen **upsert** (sin duplicados por `cve_id`) y registran trazabilidad de ejecución en `AdvisorySyncJob`.

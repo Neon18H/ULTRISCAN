@@ -85,3 +85,91 @@ class ReferenceLink(TimeStampedModel):
     end_of_life_rule = models.ForeignKey(EndOfLifeRule, null=True, blank=True, on_delete=models.CASCADE, related_name='references')
     label = models.CharField(max_length=120)
     url = models.URLField()
+
+
+class ExternalAdvisory(TimeStampedModel):
+    class Source(models.TextChoices):
+        NVD = 'NVD', 'NVD'
+
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.NVD)
+    cve_id = models.CharField(max_length=32, unique=True, db_index=True)
+    title = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    last_modified_at = models.DateTimeField(null=True, blank=True)
+    severity = models.CharField(max_length=20, blank=True)
+    cvss_score = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    cvss_vector = models.CharField(max_length=255, blank=True)
+    cvss_version = models.CharField(max_length=20, blank=True)
+    has_kev = models.BooleanField(default=False)
+    metadata = models.JSONField(default=dict, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-last_modified_at', 'cve_id']
+        indexes = [models.Index(fields=['source', 'last_modified_at'])]
+
+    def __str__(self):
+        return f'{self.source}:{self.cve_id}'
+
+
+class ExternalAdvisoryReference(TimeStampedModel):
+    advisory = models.ForeignKey(ExternalAdvisory, on_delete=models.CASCADE, related_name='references')
+    url = models.URLField()
+    source = models.CharField(max_length=120, blank=True)
+    tags = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        ordering = ['advisory_id', 'id']
+        unique_together = [('advisory', 'url')]
+
+
+class ExternalAdvisoryWeakness(TimeStampedModel):
+    advisory = models.ForeignKey(ExternalAdvisory, on_delete=models.CASCADE, related_name='weaknesses')
+    source = models.CharField(max_length=120, blank=True)
+    cwe_id = models.CharField(max_length=80, blank=True)
+    description = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ['advisory_id', 'cwe_id', 'id']
+        indexes = [models.Index(fields=['cwe_id'])]
+
+
+class ExternalAdvisoryCpeMatch(TimeStampedModel):
+    advisory = models.ForeignKey(ExternalAdvisory, on_delete=models.CASCADE, related_name='cpe_matches')
+    vulnerable = models.BooleanField(default=True)
+    criteria = models.CharField(max_length=1024)
+    match_criteria_id = models.CharField(max_length=80, blank=True)
+    version_start_including = models.CharField(max_length=120, blank=True)
+    version_start_excluding = models.CharField(max_length=120, blank=True)
+    version_end_including = models.CharField(max_length=120, blank=True)
+    version_end_excluding = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ['advisory_id', 'id']
+        unique_together = [('advisory', 'criteria', 'match_criteria_id')]
+
+
+class AdvisorySyncJob(TimeStampedModel):
+    class Status(models.TextChoices):
+        STARTED = 'started', 'Started'
+        SUCCEEDED = 'succeeded', 'Succeeded'
+        FAILED = 'failed', 'Failed'
+
+    source = models.CharField(max_length=20, default=ExternalAdvisory.Source.NVD)
+    command = models.CharField(max_length=120)
+    filters = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.STARTED)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    total_fetched = models.PositiveIntegerField(default=0)
+    total_created = models.PositiveIntegerField(default=0)
+    total_updated = models.PositiveIntegerField(default=0)
+    total_errors = models.PositiveIntegerField(default=0)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f'{self.source}:{self.command}:{self.status}'
