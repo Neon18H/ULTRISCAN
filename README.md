@@ -78,23 +78,46 @@ docker compose up --build
 ```
 
 ## Railway (deploy automático)
-Variables requeridas:
+Este mismo repositorio se despliega en **dos servicios separados** en Railway:
+
+1. **Servicio web** (Gunicorn)
+2. **Servicio worker** `ultriscan-worker` (Celery)
+
+No se necesita otro repo ni otro proyecto Django; ambos servicios usan la misma imagen/código y cambian solo el Start Command.
+
+### Variables requeridas (web y worker)
 - `SECRET_KEY`
 - `DEBUG=False`
+- `DJANGO_SETTINGS_MODULE=vulnsight.settings.production`
 - `DATABASE_URL`
 - `ALLOWED_HOSTS` (CSV, ejemplo: `vulnsight.up.railway.app,localhost`)
 - `CSRF_TRUSTED_ORIGINS` (CSV con esquema, ejemplo: `https://vulnsight.up.railway.app`)
 - `REDIS_URL`
 - `CELERY_BROKER_URL`
 - `CELERY_RESULT_BACKEND`
-- `DJANGO_SETTINGS_MODULE=vulnsight.settings.production`
-- `PORT` (Railway lo inyecta automáticamente)
+- `PORT` (Railway lo inyecta para el servicio web)
 
-En cada deploy, el contenedor ejecuta automáticamente y en orden:
+### Servicio web
+Start Command (actual):
+- `./start.sh`
+
+En cada deploy del web, el contenedor ejecuta automáticamente y en orden:
 1. `python manage.py migrate --noinput`
 2. `python manage.py seed_initial_data`
 3. `python manage.py collectstatic --noinput`
 4. `gunicorn vulnsight.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 3 --timeout 120`
+
+### Servicio worker `ultriscan-worker`
+Configura un segundo servicio Railway apuntando al **mismo repositorio** y usa:
+
+- Start Command: `./worker.sh`
+
+El worker:
+- no necesita dominio público
+- consume la cola Redis (`CELERY_BROKER_URL`)
+- guarda resultados usando `CELERY_RESULT_BACKEND`
+- usa Postgres y Redis vía variables de entorno del servicio
+- ejecuta scans en proceso separado del web
 
 `seed_initial_data` es idempotente: puede ejecutarse en cada deploy sin duplicar registros. La plataforma administra centralmente la Knowledge Base y reutiliza esas reglas para todas las organizaciones.
 

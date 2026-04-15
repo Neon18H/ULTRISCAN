@@ -31,11 +31,17 @@ REQUESTED_TYPE_TO_PROFILE = {
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=10, retry_kwargs={'max_retries': 2})
 def run_scan_task(self, scan_execution_id: int) -> None:
-    scan = ScanExecution.objects.select_related('asset', 'profile', 'organization').get(id=scan_execution_id)
+    try:
+        scan = ScanExecution.objects.select_related('asset', 'profile', 'organization').get(id=scan_execution_id)
+    except ScanExecution.DoesNotExist:
+        logger.error('Scan execution %s not found. Task will exit.', scan_execution_id)
+        return
+
     logger.info('Starting scan execution %s for org %s', scan.id, scan.organization_id)
     scan.status = ScanExecution.Status.RUNNING
     scan.started_at = timezone.now()
-    scan.save(update_fields=['status', 'started_at', 'updated_at'])
+    scan.error_message = ''
+    scan.save(update_fields=['status', 'started_at', 'error_message', 'updated_at'])
 
     try:
         requested_scan_type = (scan.engine_metadata or {}).get('requested_scan_type')
@@ -103,7 +109,8 @@ def run_scan_task(self, scan_execution_id: int) -> None:
         scan.status = ScanExecution.Status.FAILED
         scan.error_message = str(exc)
         scan.finished_at = timezone.now()
-        scan.save(update_fields=['status', 'error_message', 'finished_at', 'command_executed', 'engine_metadata', 'updated_at'])
+        scan.duration_seconds = int((scan.finished_at - scan.started_at).total_seconds()) if scan.started_at else 0
+        scan.save(update_fields=['status', 'error_message', 'finished_at', 'duration_seconds', 'command_executed', 'engine_metadata', 'updated_at'])
         raise
 
 

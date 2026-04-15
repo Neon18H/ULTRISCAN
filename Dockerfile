@@ -13,7 +13,8 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN chmod +x /app/entrypoint.sh /app/start.sh
+RUN chmod +x /app/start.sh /app/worker.sh \
+    && if [ -f /app/entrypoint.sh ]; then chmod +x /app/entrypoint.sh; fi
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["/app/start.sh"]
