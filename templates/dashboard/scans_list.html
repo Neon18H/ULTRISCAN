@@ -1,1 +1,24 @@
-{% extends "base.html" %}{% block content %}<div class="card metric-card"><div class="card-body"><h4>Scans</h4><table class='table table-hover'><thead><tr><th>ID</th><th>Activo</th><th>Estado</th><th>Creado</th></tr></thead><tbody>{% for obj in object_list %}<tr><td><a href='/scans/{{ obj.id }}/'>{{ obj.id }}</a></td><td>{{ obj.asset }}</td><td>{{ obj.status }}</td><td>{{ obj.created_at }}</td></tr>{% empty %}<tr><td colspan="4" class="text-muted">No hay escaneos.</td></tr>{% endfor %}</tbody></table></div></div>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<div class="card metric-card">
+  <div class="card-body">
+    <h4>Scans</h4>
+    <table class='table table-hover'>
+      <thead><tr><th>ID</th><th>Activo</th><th>Perfil</th><th>Estado</th><th>Creado</th></tr></thead>
+      <tbody>
+      {% for obj in object_list %}
+        <tr>
+          <td><a href='{% url "scans-detail" obj.id %}'>{{ obj.id }}</a></td>
+          <td>{{ obj.asset }}</td>
+          <td>{{ obj.profile.name }}</td>
+          <td>{{ obj.status }}</td>
+          <td>{{ obj.created_at }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-muted">No hay escaneos.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

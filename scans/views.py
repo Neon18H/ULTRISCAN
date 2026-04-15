@@ -15,18 +15,20 @@ class ScanExecutionViewSet(TenantModelViewSetMixin, viewsets.ModelViewSet):
     serializer_class = ScanExecutionSerializer
     permission_classes = [TenantAccessPermission]
 
-
     def perform_create(self, serializer):
         org = self.get_organization()
         asset = serializer.validated_data.get('asset')
         profile = serializer.validated_data.get('profile')
         if asset.organization_id != org.id or profile.organization_id != org.id:
             from rest_framework.exceptions import PermissionDenied
+
             raise PermissionDenied('Asset/Profile fuera de la organización activa.')
-        serializer.save(organization=org)
+        serializer.save(organization=org, launched_by=self.request.user, status=ScanExecution.Status.PENDING)
 
     @action(detail=True, methods=['post'])
     def launch(self, request, pk=None):
         scan = self.get_object()
+        scan.status = ScanExecution.Status.QUEUED
+        scan.save(update_fields=['status', 'updated_at'])
         run_scan_pipeline_task.delay(scan.id)
         return Response({'detail': 'Escaneo encolado'}, status=status.HTTP_202_ACCEPTED)

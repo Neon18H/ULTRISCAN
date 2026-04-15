@@ -1,1 +1,35 @@
-{% extends "base.html" %}{% block content %}<div class="card metric-card"><div class="card-body"><h3>{{ object.name }}</h3><p><b>Tipo:</b> {{ object.asset_type }}</p><p><b>Valor:</b> {{ object.value }}</p><p><b>Descripción:</b> {{ object.description|default:'-' }}</p></div></div>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h3>{{ object.name }}</h3>
+    <p><b>Tipo:</b> {{ object.asset_type }}</p>
+    <p><b>Valor:</b> {{ object.value }}</p>
+    <p><b>Descripción:</b> {{ object.description|default:'-' }}</p>
+  </div>
+</div>
+
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h5>Lanzar escaneo</h5>
+    <form method="post" action="{% url 'assets-launch-scan' object.id %}" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <div class="col-md-8">{{ launch_scan_form.profile.label_tag }} {{ launch_scan_form.profile }}</div>
+      <div class="col-md-4"><button class="btn btn-primary w-100" type="submit">Ejecutar escaneo</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="card metric-card">
+  <div class="card-body">
+    <h5>Últimos escaneos del activo</h5>
+    <ul>
+      {% for s in asset_scans %}
+        <li><a href="{% url 'scans-detail' s.id %}">Scan #{{ s.id }}</a> · {{ s.profile.name }} · {{ s.status }}</li>
+      {% empty %}
+        <li class="text-muted">No hay escaneos para este activo.</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}
