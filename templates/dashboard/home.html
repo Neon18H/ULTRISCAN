@@ -19,6 +19,13 @@
   <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Reglas de correlación' value=kb_rules_total icon='bi-journal-code' helper='Base de conocimiento activa' %}</div>
 </div>
 
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='NVD advisories synced' value=nvd_advisories_total icon='bi-database-check' helper='Total CVEs sincronizados' %}</div>
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Recent CVEs imported' value=nvd_recent_imported icon='bi-cloud-download' helper='Ingresados en últimos 7 días' %}</div>
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Critical/High advisories' value=nvd_critical_high_total icon='bi-exclamation-octagon' helper='Superficie prioritaria' %}</div>
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Last NVD sync' value=nvd_last_sync_at|date:'Y-m-d H:i'|default:'-' icon='bi-clock-history' helper='Última ejecución finalizada' %}</div>
+</div>
+
 <div class="row g-3 mb-3">
   <div class="col-xl-7">
     <div class="surface-card p-3 p-xl-4 h-100">

@@ -131,10 +131,16 @@ def _extract_references(cve: dict[str, Any]) -> tuple[list[dict[str, Any]], int]
         if not url or url in deduped:
             continue
 
+        tags = reference.get('tags') or []
+        if isinstance(tags, list):
+            normalized_tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+        else:
+            normalized_tags = [str(tags).strip()] if str(tags).strip() else []
+
         deduped[url] = {
             'url': url,
             'source': (reference.get('source') or '').strip(),
-            'tags': reference.get('tags') or [],
+            'tags': normalized_tags,
         }
 
     return list(deduped.values()), original_count
@@ -214,6 +220,8 @@ def sync_nvd_vulnerabilities(command: str, vulnerabilities: Iterable[dict[str, A
     created_count = 0
     updated_count = 0
     fetched_count = 0
+    errors_count = 0
+    error_messages: list[str] = []
 
     try:
         for entry in vulnerabilities:
@@ -221,49 +229,60 @@ def sync_nvd_vulnerabilities(command: str, vulnerabilities: Iterable[dict[str, A
             cve = entry.get('cve') or {}
             cve_id = cve.get('id')
             if not cve_id:
+                logger.warning('Skipping NVD entry without CVE id. entry_keys=%s', list(entry.keys()))
                 continue
 
-            cvss_data = _extract_cvss(cve)
-            references, refs_original_count = _extract_references(cve)
-            metadata = {
-                'source_identifier': cve.get('sourceIdentifier') or '',
-                'vuln_status': cve.get('vulnStatus') or '',
-                'cisa_exploit_add': cve.get('cisaExploitAdd') or '',
-                'cisa_action_due': cve.get('cisaActionDue') or '',
-                'cisa_required_action': cve.get('cisaRequiredAction') or '',
-            }
+            try:
+                cvss_data = _extract_cvss(cve)
+                references, refs_original_count = _extract_references(cve)
+                metadata = {
+                    'source_identifier': cve.get('sourceIdentifier') or '',
+                    'vuln_status': cve.get('vulnStatus') or '',
+                    'cisa_exploit_add': cve.get('cisaExploitAdd') or '',
+                    'cisa_action_due': cve.get('cisaActionDue') or '',
+                    'cisa_required_action': cve.get('cisaRequiredAction') or '',
+                }
 
-            defaults = {
-                'source': ExternalAdvisory.Source.NVD,
-                'title': '',
-                'description': _pick_description(cve),
-                'published_at': _parse_nvd_datetime(cve.get('published')),
-                'last_modified_at': _parse_nvd_datetime(cve.get('lastModified')),
-                'severity': cvss_data['severity'],
-                'cvss_score': cvss_data['cvss_score'],
-                'cvss_vector': cvss_data['cvss_vector'],
-                'cvss_version': cvss_data['cvss_version'],
-                'has_kev': bool(cve.get('cisaExploitAdd')),
-                'metadata': metadata,
-                'raw_payload': entry,
-            }
+                defaults = {
+                    'source': ExternalAdvisory.Source.NVD,
+                    'title': '',
+                    'description': _pick_description(cve),
+                    'published_at': _parse_nvd_datetime(cve.get('published')),
+                    'last_modified_at': _parse_nvd_datetime(cve.get('lastModified')),
+                    'severity': cvss_data['severity'],
+                    'cvss_score': cvss_data['cvss_score'],
+                    'cvss_vector': cvss_data['cvss_vector'],
+                    'cvss_version': cvss_data['cvss_version'],
+                    'has_kev': bool(cve.get('cisaExploitAdd')),
+                    'metadata': metadata,
+                    'raw_payload': entry,
+                }
 
-            with transaction.atomic():
-                advisory, created = ExternalAdvisory.objects.update_or_create(cve_id=cve_id, defaults=defaults)
-                _upsert_related(
-                    advisory=advisory,
-                    refs=references,
-                    refs_original_count=refs_original_count,
-                    weaknesses=_extract_weaknesses(cve),
-                    cpe_matches=_extract_cpe_matches(cve),
-                )
+                with transaction.atomic():
+                    advisory, created = ExternalAdvisory.objects.update_or_create(cve_id=cve_id, defaults=defaults)
+                    _upsert_related(
+                        advisory=advisory,
+                        refs=references,
+                        refs_original_count=refs_original_count,
+                        weaknesses=_extract_weaknesses(cve),
+                        cpe_matches=_extract_cpe_matches(cve),
+                    )
 
-            if created:
-                created_count += 1
-            else:
-                updated_count += 1
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+            except Exception as exc:
+                errors_count += 1
+                error_detail = f'{cve_id}: {exc}'
+                error_messages.append(error_detail)
+                logger.exception('Failed to sync NVD advisory cve_id=%s', cve_id)
+                continue
 
         job.status = AdvisorySyncJob.Status.SUCCEEDED
+        if errors_count:
+            job.total_errors = errors_count
+            job.error_message = '; '.join(error_messages[:10])
     except Exception as exc:  # pragma: no cover
         job.status = AdvisorySyncJob.Status.FAILED
         job.error_message = str(exc)

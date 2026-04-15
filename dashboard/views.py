@@ -1,4 +1,5 @@
 from django.contrib import messages
+from datetime import timedelta
 from django.core.exceptions import PermissionDenied
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.mixins import UserPassesTestMixin
@@ -6,12 +7,13 @@ from django.db import OperationalError, ProgrammingError
 from django.db.models import Count, Q
 from django.shortcuts import redirect
 from django.urls import reverse
+from django.utils import timezone
 from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView, View
 
 from accounts.tenancy import TenantQuerysetMixin, get_active_organization
 from assets.models import Asset
 from findings.models import Finding
-from knowledge_base.models import VulnerabilityRule
+from knowledge_base.models import AdvisorySyncJob, ExternalAdvisory, VulnerabilityRule
 from scan_profiles.models import ScanProfile
 from scans.models import ScanExecution, ServiceFinding
 
@@ -45,6 +47,10 @@ class DashboardHomeView(LoginRequiredMixin, TemplateView):
                     'recent_activity': [],
                     'latest_findings': [],
                     'kb_rules_total': 0,
+                    'nvd_advisories_total': 0,
+                    'nvd_recent_imported': 0,
+                    'nvd_critical_high_total': 0,
+                    'nvd_last_sync_at': None,
                 }
             )
             return context
@@ -108,6 +114,25 @@ class DashboardHomeView(LoginRequiredMixin, TemplateView):
         )
         context['latest_findings'] = latest_findings
         context['kb_rules_total'] = safe_query(0, lambda: VulnerabilityRule.objects.count())
+        context['nvd_advisories_total'] = safe_query(0, lambda: ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD).count())
+        context['nvd_recent_imported'] = safe_query(
+            0,
+            lambda: ExternalAdvisory.objects.filter(
+                source=ExternalAdvisory.Source.NVD,
+                created_at__gte=timezone.now() - timedelta(days=7),
+            ).count(),
+        )
+        context['nvd_critical_high_total'] = safe_query(
+            0,
+            lambda: ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD, severity__in=['critical', 'high']).count(),
+        )
+        context['nvd_last_sync_at'] = safe_query(
+            None,
+            lambda: AdvisorySyncJob.objects.filter(source=ExternalAdvisory.Source.NVD, finished_at__isnull=False)
+            .order_by('-finished_at')
+            .values_list('finished_at', flat=True)
+            .first(),
+        )
 
         recent_scans = context['recent_scans']
         scan_activity = [
@@ -291,6 +316,26 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
     model = Finding
     template_name = 'dashboard/finding_detail.html'
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        cve_id = ''
+        if self.object.vulnerability_rule and self.object.vulnerability_rule.cve:
+            cve_id = self.object.vulnerability_rule.cve.strip().upper()
+
+        context['nvd_advisory'] = None
+        context['nvd_references'] = []
+        if cve_id:
+            advisory = safe_query(
+                None,
+                lambda: ExternalAdvisory.objects.filter(cve_id=cve_id)
+                .prefetch_related('references')
+                .first(),
+            )
+            context['nvd_advisory'] = advisory
+            if advisory:
+                context['nvd_references'] = list(advisory.references.all()[:5])
+        return context
+
 
 class FindingsTechnicalPdfView(LoginRequiredMixin, FindingFilterMixin, View):
     def get(self, request, *args, **kwargs):
@@ -325,8 +370,33 @@ class ExecutiveSummaryPdfView(LoginRequiredMixin, View):
 
 
 class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
-    model = VulnerabilityRule
+    model = ExternalAdvisory
     template_name = 'dashboard/knowledge_base_list.html'
+    paginate_by = 25
+
+    def get_queryset(self):
+        return (
+            ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD)
+            .annotate(references_count=Count('references'))
+            .order_by('-last_modified_at', '-published_at', '-created_at')
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['kb_rules_total'] = safe_query(0, lambda: VulnerabilityRule.objects.count())
+        context['nvd_advisories_total'] = safe_query(0, lambda: ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD).count())
+        context['nvd_critical_high_total'] = safe_query(
+            0,
+            lambda: ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD, severity__in=['critical', 'high']).count(),
+        )
+        context['nvd_last_sync_at'] = safe_query(
+            None,
+            lambda: AdvisorySyncJob.objects.filter(source=ExternalAdvisory.Source.NVD, finished_at__isnull=False)
+            .order_by('-finished_at')
+            .values_list('finished_at', flat=True)
+            .first(),
+        )
+        return context
 
     def test_func(self):
         return self.request.user.is_staff

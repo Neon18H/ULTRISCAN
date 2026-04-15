@@ -115,8 +115,8 @@ class ExternalAdvisory(TimeStampedModel):
 
 class ExternalAdvisoryReference(TimeStampedModel):
     advisory = models.ForeignKey(ExternalAdvisory, on_delete=models.CASCADE, related_name='references')
-    url = models.URLField()
-    source = models.CharField(max_length=120, blank=True)
+    url = models.TextField()
+    source = models.CharField(max_length=255, blank=True)
     tags = models.JSONField(default=list, blank=True)
 
     class Meta:
@@ -126,9 +126,9 @@ class ExternalAdvisoryReference(TimeStampedModel):
 
 class ExternalAdvisoryWeakness(TimeStampedModel):
     advisory = models.ForeignKey(ExternalAdvisory, on_delete=models.CASCADE, related_name='weaknesses')
-    source = models.CharField(max_length=120, blank=True)
+    source = models.CharField(max_length=255, blank=True)
     cwe_id = models.CharField(max_length=80, blank=True)
-    description = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
 
     class Meta:
         ordering = ['advisory_id', 'cwe_id', 'id']
