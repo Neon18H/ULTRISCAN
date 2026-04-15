@@ -122,3 +122,6 @@ LOGGING = {
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'dashboard-home'
 LOGOUT_REDIRECT_URL = 'login'
+
+NVD_API_KEY = env('NVD_API_KEY', default='')
+NVD_SYNC_PAGE_SIZE = env.int('NVD_SYNC_PAGE_SIZE', default=200)
