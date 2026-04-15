@@ -86,3 +86,67 @@ class CorrelationTests(TestCase):
         findings = CorrelationService().correlate_scan_execution(self.scan)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].title, 'FTP exposed on 21')
+
+    def test_exposure_rule_matches_service_alias_with_port(self):
+        product = Product.objects.create(name='Generic HTTP Service')
+        rem = RemediationTemplate.objects.create(title='r3', body='restrict')
+        MisconfigurationRule.objects.create(
+            title='Alternate HTTP service exposed',
+            product=product,
+            port=8088,
+            protocol='tcp',
+            required_state='open',
+            evidence_type='network_exposure',
+            severity='medium',
+            confidence='high',
+            description='desc',
+            remediation_template=rem,
+        )
+
+        ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=8088,
+            protocol='tcp',
+            state='open',
+            service='radan-http',
+            product='',
+            version='',
+        )
+
+        findings = CorrelationService().correlate_scan_execution(self.scan)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].title, 'Alternate HTTP service exposed')
+
+    def test_product_mismatch_does_not_block_exposure_rule(self):
+        product = Product.objects.create(name='Elasticsearch')
+        rem = RemediationTemplate.objects.create(title='r4', body='restrict')
+        MisconfigurationRule.objects.create(
+            title='Port 9200 exposed',
+            product=product,
+            port=9200,
+            protocol='tcp',
+            required_state='open',
+            evidence_type='network_exposure',
+            severity='high',
+            confidence='high',
+            description='desc',
+            remediation_template=rem,
+        )
+
+        ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=9200,
+            protocol='tcp',
+            state='open',
+            service='wap-wsp',
+            product='',
+            version='',
+        )
+
+        findings = CorrelationService().correlate_scan_execution(self.scan)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].title, 'Port 9200 exposed')

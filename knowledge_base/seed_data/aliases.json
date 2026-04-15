@@ -12,9 +12,12 @@
   {"alias": "https", "product": "Generic HTTPS Service"},
   {"alias": "https-alt", "product": "Generic HTTPS Service"},
   {"alias": "ssl/http", "product": "Generic HTTPS Service"},
+  {"alias": "radan-http", "product": "Generic HTTP Service"},
+  {"alias": "http-alt", "product": "Generic HTTP Service"},
   {"alias": "ftp", "product": "FTP"},
   {"alias": "mysql", "product": "MySQL"},
   {"alias": "pptp", "product": "PPTP"},
   {"alias": "sip", "product": "SIP"},
-  {"alias": "elasticsearch", "product": "Elasticsearch"}
+  {"alias": "elasticsearch", "product": "Elasticsearch"},
+  {"alias": "wap-wsp", "product": "Elasticsearch"}
 ]
