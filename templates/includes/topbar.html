@@ -1,11 +1,11 @@
-<nav class="navbar bg-white border-bottom px-4 py-3">
+<nav class="navbar topbar px-4 py-3">
   <div>
     <div class="fw-semibold">Security Operations Center</div>
-    <div class="small text-muted">Rol: {{ current_role|default:'-' }}</div>
+    <div class="small text-muted">Rol: {{ current_role|default:'-' }} · Vista corporativa</div>
   </div>
   <div class="d-flex align-items-center gap-3">
-    <span class="badge text-bg-light border">{{ current_organization.name|default:'Sin organización' }}</span>
-    <a href="/accounts/profile/" class="text-decoration-none fw-semibold">{{ request.user.get_full_name|default:request.user.email }}</a>
+    <span class="org-chip">{{ current_organization.name|default:'Sin organización' }}</span>
+    <a href="/accounts/profile/" class="text-decoration-none fw-semibold text-dark">{{ request.user.get_full_name|default:request.user.email }}</a>
     <form method="post" action="{% url 'logout' %}" class="m-0">
       {% csrf_token %}
       <button type="submit" class="btn btn-outline-dark btn-sm d-flex align-items-center gap-2">

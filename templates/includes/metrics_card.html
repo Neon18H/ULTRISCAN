@@ -1,6 +1,12 @@
-<div class="card metric-card h-100">
-  <div class="card-body">
-    <div class="text-muted small mb-1">{{ title }}</div>
-    <h3 class="mb-0">{{ value }}</h3>
+<div class="metric-card p-3 p-xl-4">
+  <div class="d-flex align-items-start justify-content-between">
+    <div>
+      <div class="metric-kicker mb-2">{{ title }}</div>
+      <div class="metric-value">{{ value }}</div>
+      {% if helper %}<div class="metric-meta mt-2">{{ helper }}</div>{% endif %}
+    </div>
+    <div class="metric-icon">
+      <i class="bi {{ icon|default:'bi-bar-chart-line' }}"></i>
+    </div>
   </div>
 </div>

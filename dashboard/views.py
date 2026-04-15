@@ -31,17 +31,102 @@ class DashboardHomeView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         org = get_active_organization(self.request.user)
         if not org:
-            context.update({'assets_total': 0, 'recent_scans': [], 'findings_by_severity': [], 'open_vs_remediated': [], 'top_services': [], 'top_products': [], 'recent_activity': [], 'kb_rules_total': 0})
+            context.update(
+                {
+                    'assets_total': 0,
+                    'recent_scans': [],
+                    'findings_by_severity': [],
+                    'findings_total': 0,
+                    'open_vs_remediated': [],
+                    'top_services': [],
+                    'top_products': [],
+                    'recent_activity': [],
+                    'latest_findings': [],
+                    'kb_rules_total': 0,
+                }
+            )
             return context
 
         context['assets_total'] = safe_query(0, lambda: Asset.objects.filter(organization=org).count())
-        context['recent_scans'] = safe_query([], lambda: list(ScanExecution.objects.filter(organization=org).order_by('-created_at')[:5]))
-        context['findings_by_severity'] = safe_query([], lambda: list(Finding.objects.filter(organization=org).values('severity').annotate(total=Count('id'))))
-        context['open_vs_remediated'] = safe_query([], lambda: list(Finding.objects.filter(organization=org).values('status').annotate(total=Count('id')).filter(status__in=['open', 'remediated'])))
-        context['top_services'] = safe_query([], lambda: list(ServiceFinding.objects.filter(organization=org).exclude(service='').values('service').annotate(total=Count('id')).order_by('-total')[:5]))
-        context['top_products'] = safe_query([], lambda: list(ServiceFinding.objects.filter(organization=org).exclude(product='').values('product').annotate(total=Count('id')).order_by('-total')[:5]))
-        context['recent_activity'] = safe_query([], lambda: list(Finding.objects.filter(organization=org).order_by('-created_at')[:8]))
+        context['recent_scans'] = safe_query([], lambda: list(ScanExecution.objects.filter(organization=org).order_by('-created_at')[:6]))
+
+        severity_counts = safe_query(
+            [], lambda: list(Finding.objects.filter(organization=org).values('severity').annotate(total=Count('id')))
+        )
+        severity_lookup = {item['severity']: item['total'] for item in severity_counts}
+        severity_order = ['critical', 'high', 'medium', 'low', 'info']
+        findings_total = sum(item['total'] for item in severity_counts)
+
+        context['findings_by_severity'] = [
+            {
+                'severity': severity,
+                'total': severity_lookup.get(severity, 0),
+                'percentage': round((severity_lookup.get(severity, 0) / findings_total) * 100, 1) if findings_total else 0,
+            }
+            for severity in severity_order
+        ]
+        context['findings_total'] = findings_total
+        context['open_vs_remediated'] = safe_query(
+            [],
+            lambda: list(
+                Finding.objects.filter(organization=org)
+                .values('status')
+                .annotate(total=Count('id'))
+                .filter(status__in=['open', 'remediated'])
+            ),
+        )
+        context['top_services'] = safe_query(
+            [],
+            lambda: list(
+                ServiceFinding.objects.filter(organization=org)
+                .exclude(service='')
+                .values('service')
+                .annotate(total=Count('id'))
+                .order_by('-total')[:6]
+            ),
+        )
+        context['top_products'] = safe_query(
+            [],
+            lambda: list(
+                ServiceFinding.objects.filter(organization=org)
+                .exclude(product='')
+                .values('product')
+                .annotate(total=Count('id'))
+                .order_by('-total')[:5]
+            ),
+        )
+
+        latest_findings = safe_query(
+            [],
+            lambda: list(
+                Finding.objects.filter(organization=org)
+                .select_related('asset', 'service_finding')
+                .order_by('-created_at')[:6]
+            ),
+        )
+        context['latest_findings'] = latest_findings
         context['kb_rules_total'] = safe_query(0, lambda: VulnerabilityRule.objects.count())
+
+        recent_scans = context['recent_scans']
+        scan_activity = [
+            {
+                'kind': f'scan_{scan.status}',
+                'title': f'Scan #{scan.id} · {scan.asset.name if scan.asset else "Sin activo"}',
+                'description': f'Perfil: {scan.profile.name if scan.profile else "N/A"} · Estado {scan.get_status_display()}',
+                'timestamp': scan.created_at,
+            }
+            for scan in recent_scans[:4]
+        ]
+        finding_activity = [
+            {
+                'kind': 'finding_created',
+                'title': finding.title,
+                'description': f'Nuevo finding {finding.get_severity_display()} en {finding.asset.name if finding.asset else "activo no asociado"}',
+                'timestamp': finding.created_at,
+            }
+            for finding in latest_findings[:6]
+        ]
+        context['recent_activity'] = sorted(scan_activity + finding_activity, key=lambda item: item['timestamp'], reverse=True)[:8]
         return context
 
 
@@ -97,6 +182,14 @@ class AssetDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
 class FindingListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):
     model = Finding
     template_name = 'dashboard/findings_list.html'
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .select_related('asset', 'service_finding', 'scan_execution')
+            .order_by('-created_at')
+        )
 
 
 class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):

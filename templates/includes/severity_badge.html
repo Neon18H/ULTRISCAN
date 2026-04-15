@@ -1,1 +1,8 @@
-<span class="badge severity-badge severity-{{ severity }} text-white">{{ severity }}</span>
+<span class="badge severity-badge severity-{{ severity }}">
+  {% if severity == 'critical' %}<i class="bi bi-fire"></i>{% endif %}
+  {% if severity == 'high' %}<i class="bi bi-exclamation-triangle"></i>{% endif %}
+  {% if severity == 'medium' %}<i class="bi bi-exclamation-circle"></i>{% endif %}
+  {% if severity == 'low' %}<i class="bi bi-info-circle"></i>{% endif %}
+  {% if severity == 'info' %}<i class="bi bi-dot"></i>{% endif %}
+  {{ severity }}
+</span>
