@@ -5,15 +5,29 @@ from core.models import TimeStampedModel
 class Product(TimeStampedModel):
     name = models.CharField(max_length=120, unique=True)
     vendor = models.CharField(max_length=120, blank=True)
+
     class Meta:
         ordering = ['name']
+
     def __str__(self):
         return self.name
+
+
+class ProductAlias(TimeStampedModel):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='aliases')
+    alias = models.CharField(max_length=120, unique=True)
+
+    class Meta:
+        ordering = ['alias']
+
+    def __str__(self):
+        return self.alias
 
 
 class RemediationTemplate(TimeStampedModel):
     title = models.CharField(max_length=150)
     body = models.TextField()
+
     def __str__(self):
         return self.title
 
@@ -25,6 +39,7 @@ class BaseRule(TimeStampedModel):
         MEDIUM = 'medium', 'Medium'
         HIGH = 'high', 'High'
         CRITICAL = 'critical', 'Critical'
+
     class Confidence(models.TextChoices):
         LOW = 'low', 'Low'
         MEDIUM = 'medium', 'Medium'
@@ -42,6 +57,7 @@ class BaseRule(TimeStampedModel):
     confidence = models.CharField(max_length=20, choices=Confidence.choices, default=Confidence.MEDIUM)
     description = models.TextField()
     remediation_template = models.ForeignKey(RemediationTemplate, null=True, blank=True, on_delete=models.SET_NULL)
+
     class Meta:
         abstract = True
 
@@ -58,14 +74,9 @@ class EndOfLifeRule(BaseRule):
     eol_date = models.DateField(null=True, blank=True)
 
 
-class ProductVersionRule(TimeStampedModel):
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='version_rules')
-    from_version = models.CharField(max_length=50)
-    to_version = models.CharField(max_length=50)
-    note = models.TextField(blank=True)
-
-
 class ReferenceLink(TimeStampedModel):
-    vulnerability_rule = models.ForeignKey(VulnerabilityRule, on_delete=models.CASCADE, related_name='references')
+    vulnerability_rule = models.ForeignKey(VulnerabilityRule, null=True, blank=True, on_delete=models.CASCADE, related_name='references')
+    misconfiguration_rule = models.ForeignKey(MisconfigurationRule, null=True, blank=True, on_delete=models.CASCADE, related_name='references')
+    end_of_life_rule = models.ForeignKey(EndOfLifeRule, null=True, blank=True, on_delete=models.CASCADE, related_name='references')
     label = models.CharField(max_length=120)
     url = models.URLField()

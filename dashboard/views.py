@@ -1,6 +1,10 @@
+from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import OperationalError, ProgrammingError
 from django.db.models import Count
+from django.shortcuts import get_object_or_404, redirect
+from django.urls import reverse
+from django.views import View
 from django.views.generic import DetailView, ListView, TemplateView
 
 from accounts.tenancy import TenantQuerysetMixin, get_active_organization
@@ -8,7 +12,10 @@ from assets.models import Asset
 from findings.models import Finding
 from knowledge_base.models import VulnerabilityRule
 from scans.models import ScanExecution, ServiceFinding
+from scans.tasks import run_scan_pipeline_task
 from scan_profiles.models import ScanProfile
+
+from .forms import LaunchScanForm
 
 
 def safe_query(default, query_fn):
@@ -46,6 +53,34 @@ class AssetListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):
 class AssetDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
     model = Asset
     template_name = 'dashboard/asset_detail.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['launch_scan_form'] = LaunchScanForm(organization=self.get_organization())
+        context['asset_scans'] = self.object.scan_executions.select_related('profile').order_by('-created_at')[:10]
+        return context
+
+
+class LaunchScanView(LoginRequiredMixin, View):
+    def post(self, request, asset_id):
+        org = get_active_organization(request.user)
+        asset = get_object_or_404(Asset, id=asset_id, organization=org)
+        form = LaunchScanForm(request.POST, organization=org)
+        if not form.is_valid():
+            messages.error(request, 'Perfil de escaneo inválido para tu organización.')
+            return redirect(reverse('assets-detail', kwargs={'pk': asset.id}))
+
+        profile = form.cleaned_data['profile']
+        scan = ScanExecution.objects.create(
+            organization=org,
+            asset=asset,
+            profile=profile,
+            launched_by=request.user,
+            status=ScanExecution.Status.PENDING,
+        )
+        run_scan_pipeline_task.delay(scan.id)
+        messages.success(request, f'Escaneo #{scan.id} encolado correctamente.')
+        return redirect(reverse('scans-detail', kwargs={'pk': scan.id}))
 
 
 class ScanListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):

@@ -1,1 +1,42 @@
-{% extends "base.html" %}{% block content %}<div class="card metric-card"><div class="card-body"><h3>Scan #{{ object.id }}</h3><p><b>Estado:</b> {{ object.status }}</p><p><b>Comando:</b> <code>{{ object.command_executed|default:'-' }}</code></p><h5>Servicios detectados</h5><ul>{% for s in object.service_findings.all %}<li>{{ s.host }}:{{ s.port }} {{ s.service }} {{ s.version }}</li>{% empty %}<li class="text-muted">Sin datos</li>{% endfor %}</ul></div></div>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h3>Scan #{{ object.id }}</h3>
+    <p><b>Estado:</b> {{ object.status }}</p>
+    <p><b>Comando:</b> <code>{{ object.command_executed|default:'-' }}</code></p>
+    <p><b>Error:</b> {{ object.error_message|default:'-' }}</p>
+    <p><b>Resumen:</b> {{ object.summary|default:'-' }}</p>
+  </div>
+</div>
+<div class="row">
+  <div class="col-lg-6">
+    <div class="card metric-card">
+      <div class="card-body">
+        <h5>Servicios detectados</h5>
+        <ul>
+          {% for s in object.service_findings.all %}
+            <li>{{ s.host }}:{{ s.port }}/{{ s.protocol }} · {{ s.service }} · {{ s.product }} {{ s.version }}</li>
+          {% empty %}
+            <li class="text-muted">Sin datos</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card metric-card">
+      <div class="card-body">
+        <h5>Findings generados</h5>
+        <ul>
+          {% for f in object.findings.all %}
+            <li><a href="{% url 'findings-detail' f.id %}">{{ f.title }}</a> · {{ f.severity }} · {{ f.status }}</li>
+          {% empty %}
+            <li class="text-muted">No se generaron findings.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
