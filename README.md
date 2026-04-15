@@ -161,3 +161,21 @@ railway logs
 railway shell
 python manage.py showmigrations
 ```
+
+## Enterprise UX y reporting (fase actual)
+
+### Autenticación enterprise
+- Login y registro rediseñados con layout dedicado `auth_base.html`, visual SaaS corporativo, mensajes limpios y validaciones de contraseña con `django.contrib.auth.password_validation`.
+- Login soporta opción **Remember me** (si no se marca, sesión expira al cerrar navegador).
+
+### Findings con filtros avanzados
+- `/findings/` ahora soporta filtros combinables por query params: `severity`, `status`, `confidence`, `asset`, `service`, `port`, `date_from`, `date_to`, `query`.
+- Los filtros persisten en paginación y se reflejan en chips visuales.
+- Export técnico respeta exactamente los filtros activos.
+
+### Reportes PDF
+- Se agregó un módulo dedicado `dashboard/reports.py` con un generador PDF interno (sin dependencias nativas externas).
+- Nuevas rutas:
+  - `GET /reports/executive-summary.pdf` (Executive Summary)
+  - `GET /findings/export/technical-pdf/` (Technical Findings filtrado)
+- Ambos reportes respetan multitenancy (organización activa del usuario autenticado).

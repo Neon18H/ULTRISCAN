@@ -17,6 +17,12 @@ class AccountLoginView(LoginView):
     template_name = 'auth/login.html'
     redirect_authenticated_user = True
 
+    def form_valid(self, form):
+        remember_me = form.cleaned_data.get('remember_me')
+        if not remember_me:
+            self.request.session.set_expiry(0)
+        return super().form_valid(form)
+
 
 class AccountLogoutView(LogoutView):
     next_page = reverse_lazy('login')

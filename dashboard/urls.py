@@ -9,7 +9,9 @@ from .views import (
     AssetUpdateView,
     DashboardHomeView,
     FindingDetailView,
+    ExecutiveSummaryPdfView,
     FindingListView,
+    FindingsTechnicalPdfView,
     KnowledgeBaseListView,
     ScanProfileListView,
 )
@@ -26,6 +28,8 @@ urlpatterns = [
     path('scans/', ScanListView.as_view(), name='scans-list'),
     path('scans/<int:pk>/', ScanDetailView.as_view(), name='scans-detail'),
     path('findings/', FindingListView.as_view(), name='findings-list'),
+    path('findings/export/technical-pdf/', FindingsTechnicalPdfView.as_view(), name='findings-export-technical-pdf'),
+    path('reports/executive-summary.pdf', ExecutiveSummaryPdfView.as_view(), name='reports-executive-pdf'),
     path('findings/<int:pk>/', FindingDetailView.as_view(), name='findings-detail'),
     path('knowledge-base/', KnowledgeBaseListView.as_view(), name='knowledge-base-list'),
 ]
