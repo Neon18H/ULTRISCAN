@@ -1,13 +1,22 @@
+from django.contrib import messages
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.exceptions import PermissionDenied
+from django.shortcuts import get_object_or_404, redirect
+from django.urls import reverse
+from django.views.generic import DetailView, ListView, TemplateView
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from accounts.permissions import TenantAccessPermission
+from accounts.tenancy import TenantQuerysetMixin, get_active_organization
+from assets.models import Asset
 from core.tenant_api import TenantModelViewSetMixin
 
+from .forms import CreateScanForm
 from .models import ScanExecution
 from .serializers import ScanExecutionSerializer
-from .tasks import run_scan_pipeline_task
+from .tasks import run_scan_task
 
 
 class ScanExecutionViewSet(TenantModelViewSetMixin, viewsets.ModelViewSet):
@@ -30,5 +39,69 @@ class ScanExecutionViewSet(TenantModelViewSetMixin, viewsets.ModelViewSet):
         scan = self.get_object()
         scan.status = ScanExecution.Status.QUEUED
         scan.save(update_fields=['status', 'updated_at'])
-        run_scan_pipeline_task.delay(scan.id)
+        run_scan_task.delay(scan.id)
         return Response({'detail': 'Escaneo encolado'}, status=status.HTTP_202_ACCEPTED)
+
+
+class ScanCreateView(LoginRequiredMixin, TemplateView):
+    template_name = 'scans/create.html'
+
+    def _resolve_asset(self):
+        org = get_active_organization(self.request.user)
+        if not org:
+            raise PermissionDenied('No existe una organización activa para este usuario.')
+        asset_id = self.request.GET.get('asset') if self.request.method == 'GET' else self.request.POST.get('asset_id')
+        return org, get_object_or_404(Asset, id=asset_id, organization=org)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        org, asset = self._resolve_asset()
+        context['asset'] = asset
+        context['form'] = kwargs.get('form') or CreateScanForm(organization=org)
+        return context
+
+    def post(self, request, *args, **kwargs):
+        org, asset = self._resolve_asset()
+        form = CreateScanForm(request.POST, organization=org)
+        if not form.is_valid():
+            messages.error(request, 'Selecciona un perfil válido para tu organización.')
+            return self.render_to_response(self.get_context_data(form=form))
+
+        profile = form.cleaned_data['profile']
+        scan = ScanExecution.objects.create(
+            organization=org,
+            asset=asset,
+            profile=profile,
+            launched_by=request.user,
+            status=ScanExecution.Status.QUEUED,
+        )
+        run_scan_task.delay(scan.id)
+        messages.success(request, f'Escaneo #{scan.id} encolado correctamente.')
+        return redirect(reverse('scans-detail', kwargs={'pk': scan.id}))
+
+
+class ScanListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):
+    model = ScanExecution
+    template_name = 'scans/list.html'
+    paginate_by = 25
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .select_related('asset', 'profile')
+            .order_by('-created_at')
+        )
+
+
+class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
+    model = ScanExecution
+    template_name = 'scans/detail.html'
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .select_related('asset', 'profile', 'launched_by')
+            .prefetch_related('service_findings', 'raw_evidences', 'findings')
+        )

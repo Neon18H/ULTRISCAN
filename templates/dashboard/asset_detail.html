@@ -1,35 +1,42 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card metric-card mb-3">
-  <div class="card-body">
-    <h3>{{ object.name }}</h3>
-    <p><b>Tipo:</b> {{ object.asset_type }}</p>
-    <p><b>Valor:</b> {{ object.value }}</p>
-    <p><b>Descripción:</b> {{ object.description|default:'-' }}</p>
+<div class="page-header d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h2 class="mb-1">{{ object.name }}</h2>
+    <p class="text-muted mb-0">{{ object.asset_type }} · {{ object.value }}</p>
   </div>
+  <a class="btn btn-primary" href="{% url 'scans-create' %}?asset={{ object.id }}">
+    <i class="bi bi-play-circle me-1"></i>Run Scan
+  </a>
 </div>
 
-<div class="card metric-card mb-3">
+<div class="card metric-card mb-4">
   <div class="card-body">
-    <h5>Lanzar escaneo</h5>
-    <form method="post" action="{% url 'assets-launch-scan' object.id %}" class="row g-2 align-items-end">
-      {% csrf_token %}
-      <div class="col-md-8">{{ launch_scan_form.profile.label_tag }} {{ launch_scan_form.profile }}</div>
-      <div class="col-md-4"><button class="btn btn-primary w-100" type="submit">Ejecutar escaneo</button></div>
-    </form>
+    <h6 class="text-uppercase text-muted">Asset summary</h6>
+    <p><b>Descripción:</b> {{ object.description|default:'-' }}</p>
   </div>
 </div>
 
 <div class="card metric-card">
   <div class="card-body">
-    <h5>Últimos escaneos del activo</h5>
-    <ul>
-      {% for s in asset_scans %}
-        <li><a href="{% url 'scans-detail' s.id %}">Scan #{{ s.id }}</a> · {{ s.profile.name }} · {{ s.status }}</li>
-      {% empty %}
-        <li class="text-muted">No hay escaneos para este activo.</li>
-      {% endfor %}
-    </ul>
+    <h5 class="mb-3">Últimos escaneos</h5>
+    <div class="table-responsive">
+      <table class="table table-enterprise align-middle mb-0">
+        <thead><tr><th>ID</th><th>Perfil</th><th>Estado</th><th>Fecha</th></tr></thead>
+        <tbody>
+        {% for s in asset_scans %}
+          <tr>
+            <td><a href="{% url 'scans-detail' s.id %}">#{{ s.id }}</a></td>
+            <td>{{ s.profile.name }}</td>
+            <td><span class="badge status-badge status-{{ s.status }}">{{ s.get_status_display }}</span></td>
+            <td>{{ s.created_at|date:'Y-m-d H:i' }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="text-muted">No hay escaneos para este activo.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 {% endblock %}
