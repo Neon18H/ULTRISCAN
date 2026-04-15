@@ -3,36 +3,46 @@
 <div class="page-header d-flex justify-content-between align-items-start mb-4">
   <div>
     <h2 class="mb-1">{{ object.name }}</h2>
-    <p class="text-muted mb-0">{{ object.asset_type }} · {{ object.value }}</p>
+    <p class="text-muted mb-0">{{ object.get_asset_type_display }} · {{ object.value }}</p>
   </div>
-  <a class="btn btn-primary" href="{% url 'scans-create' %}?asset={{ object.id }}">
-    <i class="bi bi-play-circle me-1"></i>Run Scan
-  </a>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'assets-edit' object.id %}">Edit Asset</a>
+    <a class="btn btn-primary" href="{% url 'scans-create' %}?asset={{ object.id }}">
+      <i class="bi bi-play-circle me-1"></i>Run Scan
+    </a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Criticality</div><div class="fw-semibold">{{ object.get_criticality_display }}</div></div></div></div>
+  <div class="col-lg-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Status</div><div class="fw-semibold">{{ object.get_status_display }}</div></div></div></div>
+  <div class="col-lg-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Tags</div><div class="fw-semibold">{{ object.tags|default:'-' }}</div></div></div></div>
 </div>
 
 <div class="card metric-card mb-4">
   <div class="card-body">
     <h6 class="text-uppercase text-muted">Asset summary</h6>
-    <p><b>Descripción:</b> {{ object.description|default:'-' }}</p>
+    <p class="mb-0"><b>Descripción:</b> {{ object.description|default:'-' }}</p>
   </div>
 </div>
 
 <div class="card metric-card">
   <div class="card-body">
-    <h5 class="mb-3">Últimos escaneos</h5>
+    <h5 class="mb-3">Latest scans</h5>
     <div class="table-responsive">
       <table class="table table-enterprise align-middle mb-0">
-        <thead><tr><th>ID</th><th>Perfil</th><th>Estado</th><th>Fecha</th></tr></thead>
+        <thead><tr><th>ID</th><th>Scan type/profile</th><th>Status</th><th>Date</th><th class="text-end">Actions</th></tr></thead>
         <tbody>
         {% for s in asset_scans %}
           <tr>
             <td><a href="{% url 'scans-detail' s.id %}">#{{ s.id }}</a></td>
-            <td>{{ s.profile.name }}</td>
+            <td>{{ s.engine_metadata.requested_scan_type|default:s.profile.name }} / {{ s.profile.name }}</td>
             <td><span class="badge status-badge status-{{ s.status }}">{{ s.get_status_display }}</span></td>
             <td>{{ s.created_at|date:'Y-m-d H:i' }}</td>
+            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'scans-detail' s.id %}">View</a></td>
           </tr>
         {% empty %}
-          <tr><td colspan="4" class="text-muted">No hay escaneos para este activo.</td></tr>
+          <tr><td colspan="5" class="text-muted">No hay escaneos para este activo.</td></tr>
         {% endfor %}
         </tbody>
       </table>

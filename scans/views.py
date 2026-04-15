@@ -1,7 +1,7 @@
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import redirect
 from django.urls import reverse
 from django.views.generic import DetailView, ListView, TemplateView
 from rest_framework import status, viewsets
@@ -10,10 +10,9 @@ from rest_framework.response import Response
 
 from accounts.permissions import TenantAccessPermission
 from accounts.tenancy import TenantQuerysetMixin, get_active_organization
-from assets.models import Asset
 from core.tenant_api import TenantModelViewSetMixin
 
-from .forms import CreateScanForm
+from .forms import CreateScanForm, SCAN_TYPE_HELP, SCAN_TYPE_TO_PROFILE
 from .models import ScanExecution
 from .serializers import ScanExecutionSerializer
 from .tasks import run_scan_task
@@ -46,34 +45,53 @@ class ScanExecutionViewSet(TenantModelViewSetMixin, viewsets.ModelViewSet):
 class ScanCreateView(LoginRequiredMixin, TemplateView):
     template_name = 'scans/create.html'
 
-    def _resolve_asset(self):
+    def _get_org(self):
         org = get_active_organization(self.request.user)
         if not org:
             raise PermissionDenied('No existe una organización activa para este usuario.')
-        asset_id = self.request.GET.get('asset') if self.request.method == 'GET' else self.request.POST.get('asset_id')
-        return org, get_object_or_404(Asset, id=asset_id, organization=org)
+        return org
+
+    def _build_form(self, org, post_data=None):
+        asset_id = self.request.GET.get('asset')
+        initial_asset = None
+        if asset_id and str(asset_id).isdigit():
+            initial_asset = int(asset_id)
+        return CreateScanForm(post_data, organization=org, initial_asset=initial_asset)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        org, asset = self._resolve_asset()
-        context['asset'] = asset
-        context['form'] = kwargs.get('form') or CreateScanForm(organization=org)
+        org = self._get_org()
+        form = kwargs.get('form') or self._build_form(org)
+        context['form'] = form
+        context['scan_type_help'] = SCAN_TYPE_HELP
         return context
 
     def post(self, request, *args, **kwargs):
-        org, asset = self._resolve_asset()
-        form = CreateScanForm(request.POST, organization=org)
+        org = self._get_org()
+        form = self._build_form(org, request.POST)
         if not form.is_valid():
-            messages.error(request, 'Selecciona un perfil válido para tu organización.')
+            messages.error(request, 'Revisa los campos del formulario para continuar.')
             return self.render_to_response(self.get_context_data(form=form))
 
+        asset = form.cleaned_data['asset']
         profile = form.cleaned_data['profile']
+        scan_type = form.cleaned_data['scan_type']
+        expected_profile = SCAN_TYPE_TO_PROFILE.get(scan_type)
+        if profile.name.lower() != expected_profile:
+            messages.error(request, f'El tipo seleccionado requiere el perfil {expected_profile}.')
+            return self.render_to_response(self.get_context_data(form=form))
+
         scan = ScanExecution.objects.create(
             organization=org,
             asset=asset,
             profile=profile,
             launched_by=request.user,
             status=ScanExecution.Status.QUEUED,
+            engine_metadata={
+                'requested_scan_type': scan_type,
+                'requested_module': form.cleaned_data['module'],
+                'requested_options': form.cleaned_data['options'],
+            },
         )
         run_scan_task.delay(scan.id)
         messages.success(request, f'Escaneo #{scan.id} encolado correctamente.')

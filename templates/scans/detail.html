@@ -9,9 +9,19 @@
 </div>
 
 <div class="row g-3 mb-3">
-  <div class="col-lg-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Estado</div><div class="fw-semibold">{{ object.get_status_display }}</div></div></div></div>
-  <div class="col-lg-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Duración</div><div class="fw-semibold">{{ object.duration_seconds }}s</div></div></div></div>
-  <div class="col-lg-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Fecha</div><div class="fw-semibold">{{ object.created_at|date:'Y-m-d H:i' }}</div></div></div></div>
+  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Tipo</div><div class="fw-semibold">{{ object.engine_metadata.requested_scan_type|default:'nmap_discovery' }}</div></div></div></div>
+  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Módulo</div><div class="fw-semibold">{{ object.engine_metadata.requested_module|default:'nmap' }}</div></div></div></div>
+  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Duración</div><div class="fw-semibold">{{ object.duration_seconds }}s</div></div></div></div>
+  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Fecha</div><div class="fw-semibold">{{ object.created_at|date:'Y-m-d H:i' }}</div></div></div></div>
+</div>
+
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h5 class="mb-2">Metadata</h5>
+    <div><strong>Command:</strong> <code>{{ object.command_executed|default:'N/A' }}</code></div>
+    <div><strong>Options:</strong> {{ object.engine_metadata.requested_options|default:'-' }}</div>
+    {% if object.error_message %}<div class="alert alert-danger mt-3 mb-0">{{ object.error_message }}</div>{% endif %}
+  </div>
 </div>
 
 <div class="card metric-card mb-3">
@@ -40,38 +50,32 @@
 
 <div class="row g-3">
   <div class="col-lg-6">
-    <div class="card metric-card h-100">
-      <div class="card-body">
-        <h5 class="mb-3">Evidencias</h5>
-        <ul class="list-group list-group-flush">
-          {% for evidence in object.raw_evidences.all %}
-            <li class="list-group-item px-0">
-              <div class="fw-semibold">{{ evidence.source|upper }} · {{ evidence.host }}</div>
-              <div class="small text-muted">{{ evidence.created_at|date:'Y-m-d H:i' }}</div>
-            </li>
-          {% empty %}
-            <li class="list-group-item px-0 text-muted">No hay evidencias almacenadas.</li>
-          {% endfor %}
-        </ul>
-      </div>
-    </div>
+    <div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Evidencias</h5>
+      <ul class="list-group list-group-flush">
+        {% for evidence in object.raw_evidences.all %}
+          <li class="list-group-item px-0">
+            <div class="fw-semibold">{{ evidence.source|upper }} · {{ evidence.host }}</div>
+            <div class="small text-muted">{{ evidence.created_at|date:'Y-m-d H:i' }}</div>
+          </li>
+        {% empty %}
+          <li class="list-group-item px-0 text-muted">No hay evidencias almacenadas.</li>
+        {% endfor %}
+      </ul>
+    </div></div>
   </div>
   <div class="col-lg-6">
-    <div class="card metric-card h-100">
-      <div class="card-body">
-        <h5 class="mb-3">Findings</h5>
-        <ul class="list-group list-group-flush">
-          {% for finding in object.findings.all %}
-            <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-              <a href="{% url 'findings-detail' finding.id %}" class="text-decoration-none">{{ finding.title }}</a>
-              {% include 'includes/severity_badge.html' with severity=finding.severity %}
-            </li>
-          {% empty %}
-            <li class="list-group-item px-0 text-muted">No se generaron findings.</li>
-          {% endfor %}
-        </ul>
-      </div>
-    </div>
+    <div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Findings</h5>
+      <ul class="list-group list-group-flush">
+        {% for finding in object.findings.all %}
+          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+            <a href="{% url 'findings-detail' finding.id %}" class="text-decoration-none">{{ finding.title }}</a>
+            {% include 'includes/severity_badge.html' with severity=finding.severity %}
+          </li>
+        {% empty %}
+          <li class="list-group-item px-0 text-muted">No se generaron findings.</li>
+        {% endfor %}
+      </ul>
+    </div></div>
   </div>
 </div>
 {% endblock %}

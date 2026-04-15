@@ -20,9 +20,13 @@ PROFILE_KEY_MAP = {
     'misconfiguration': 'discovery',
 }
 
-
-def _map_profile_name(profile_name: str) -> str:
-    return PROFILE_KEY_MAP.get(profile_name.lower().strip(), 'discovery')
+REQUESTED_TYPE_TO_PROFILE = {
+    'nmap_discovery': 'discovery',
+    'nmap_full_tcp_safe': 'full_tcp_safe',
+    'web_basic': 'discovery',
+    'wordpress_scan': 'discovery',
+    'misconfiguration_scan': 'discovery',
+}
 
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=10, retry_kwargs={'max_retries': 2})
@@ -34,10 +38,20 @@ def run_scan_task(self, scan_execution_id: int) -> None:
     scan.save(update_fields=['status', 'started_at', 'updated_at'])
 
     try:
-        mapped_profile = _map_profile_name(scan.profile.name)
+        requested_scan_type = (scan.engine_metadata or {}).get('requested_scan_type')
+        if requested_scan_type == 'gobuster_directory':
+            scan.status = ScanExecution.Status.FAILED
+            scan.error_message = 'Gobuster Directory Scan está pendiente de implementación backend.'
+            scan.finished_at = timezone.now()
+            scan.duration_seconds = int((scan.finished_at - scan.started_at).total_seconds()) if scan.started_at else 0
+            scan.summary = {'note': 'pending_implementation'}
+            scan.save(update_fields=['status', 'error_message', 'finished_at', 'duration_seconds', 'summary', 'updated_at'])
+            return
+
+        mapped_profile = REQUESTED_TYPE_TO_PROFILE.get(requested_scan_type) or PROFILE_KEY_MAP.get(scan.profile.name.lower().strip(), 'discovery')
         run_result = NmapRunner().run(target=scan.asset.value, profile=mapped_profile)
         scan.command_executed = run_result.command
-        scan.engine_metadata = run_result.metadata
+        scan.engine_metadata = {**(scan.engine_metadata or {}), 'runner_metadata': run_result.metadata}
 
         if run_result.return_code != 0:
             raise RuntimeError(run_result.stderr or 'Nmap returned non-zero exit status')
