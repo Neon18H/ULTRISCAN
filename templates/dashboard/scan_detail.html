@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<h3>Escaneo #{{ object.id }}</h3><p><b>Estado:</b> {{ object.status }}</p><p><b>Comando:</b> {{ object.command_executed }}</p><h5>Servicios</h5><ul>{% for s in object.service_findings.all %}<li>{{ s.host }}:{{ s.port }} {{ s.service }} {{ s.version }}</li>{% empty %}<li>Sin datos</li>{% endfor %}</ul>{% endblock %}

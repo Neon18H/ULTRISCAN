@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<h3>Hallazgos</h3><table class='table table-striped'><thead><tr><th>Título</th><th>Severidad</th><th>Estado</th></tr></thead><tbody>{% for obj in object_list %}<tr><td><a href='/findings/{{ obj.id }}/'>{{ obj.title }}</a></td><td>{{ obj.severity }}</td><td>{{ obj.status }}</td></tr>{% endfor %}</tbody></table>{% endblock %}

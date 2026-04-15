@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<h3>Knowledge Base</h3><table class='table table-striped'><thead><tr><th>Regla</th><th>Producto</th><th>Severidad</th></tr></thead><tbody>{% for obj in object_list %}<tr><td>{{ obj.title }}</td><td>{{ obj.product.name }}</td><td>{{ obj.severity }}</td></tr>{% endfor %}</tbody></table>{% endblock %}
