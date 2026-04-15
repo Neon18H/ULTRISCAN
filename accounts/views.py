@@ -21,6 +21,10 @@ class AccountLoginView(LoginView):
 class AccountLogoutView(LogoutView):
     next_page = reverse_lazy('login')
 
+    def post(self, request, *args, **kwargs):
+        messages.info(request, 'Sesión cerrada correctamente.')
+        return super().post(request, *args, **kwargs)
+
 
 class RegisterView(FormView):
     template_name = 'auth/register.html'

@@ -6,6 +6,12 @@
   <div class="d-flex align-items-center gap-3">
     <span class="badge text-bg-light border">{{ current_organization.name|default:'Sin organización' }}</span>
     <a href="/accounts/profile/" class="text-decoration-none fw-semibold">{{ request.user.get_full_name|default:request.user.email }}</a>
-    <a href="/accounts/logout/" class="btn btn-outline-secondary btn-sm">Salir</a>
+    <form method="post" action="{% url 'logout' %}" class="m-0">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-outline-dark btn-sm d-flex align-items-center gap-2">
+        <i class="bi bi-box-arrow-right"></i>
+        <span>Cerrar sesión</span>
+      </button>
+    </form>
   </div>
 </nav>
