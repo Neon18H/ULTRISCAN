@@ -51,6 +51,8 @@ class ServiceFinding(TimeStampedModel):
     product = models.CharField(max_length=120, blank=True)
     normalized_product = models.CharField(max_length=120, blank=True)
     version = models.CharField(max_length=120, blank=True)
+    raw_version = models.CharField(max_length=200, blank=True)
+    normalized_version = models.CharField(max_length=120, blank=True)
     extrainfo = models.CharField(max_length=200, blank=True)
     banner = models.TextField(blank=True)
     scripts = models.JSONField(default=list, blank=True)

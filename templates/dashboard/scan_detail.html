@@ -18,7 +18,7 @@
         <h5>Servicios detectados</h5>
         <ul>
           {% for s in object.service_findings.all %}
-            <li>{{ s.host }}:{{ s.port }}/{{ s.protocol }} · {{ s.service }} · {{ s.product }} {{ s.version }}</li>
+            <li>{{ s.host }}:{{ s.port }}/{{ s.protocol }} · {{ s.service }} · {{ s.product }} · raw={{ s.raw_version|default:s.version|default:'-' }}{% if s.normalized_version %} · normalized={{ s.normalized_version }}{% endif %}</li>
           {% empty %}
             <li class="text-muted">Sin datos</li>
           {% endfor %}

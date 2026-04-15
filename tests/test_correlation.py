@@ -53,6 +53,25 @@ class CorrelationTests(TestCase):
         svc.refresh_from_db()
         self.assertEqual(svc.normalized_product, 'Apache HTTP Server')
 
+
+    def test_version_range_accepts_nmap_suffix_versions(self):
+        ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=80,
+            protocol='tcp',
+            state='open',
+            service='http',
+            product='Apache httpd',
+            version='2.4.41 Ubuntu',
+            raw_version='2.4.41 Ubuntu',
+            normalized_version='2.4.41',
+        )
+
+        findings = CorrelationService().correlate_scan_execution(self.scan)
+        self.assertEqual(len(findings), 1)
+
     def test_exposure_rule_matches_without_version(self):
         product = Product.objects.create(name='FTP')
         ProductAlias.objects.create(product=product, alias='ftp')
@@ -118,6 +137,41 @@ class CorrelationTests(TestCase):
         findings = CorrelationService().correlate_scan_execution(self.scan)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].title, 'Alternate HTTP service exposed')
+
+
+    def test_invalid_version_does_not_break_exposure_finding(self):
+        product = Product.objects.create(name='FTP Legacy')
+        rem = RemediationTemplate.objects.create(title='r5', body='restrict')
+        MisconfigurationRule.objects.create(
+            title='FTP legacy exposed',
+            product=product,
+            port=2121,
+            protocol='tcp',
+            required_state='open',
+            evidence_type='network_exposure',
+            severity='medium',
+            confidence='high',
+            description='desc',
+            remediation_template=rem,
+        )
+
+        ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=2121,
+            protocol='tcp',
+            state='open',
+            service='ftp',
+            product='',
+            version='9.6p1 Ubuntu 3ubuntu13.15',
+            raw_version='9.6p1 Ubuntu 3ubuntu13.15',
+            normalized_version='',
+        )
+
+        findings = CorrelationService().correlate_scan_execution(self.scan)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].title, 'FTP legacy exposed')
 
     def test_product_mismatch_does_not_block_exposure_rule(self):
         product = Product.objects.create(name='Elasticsearch')

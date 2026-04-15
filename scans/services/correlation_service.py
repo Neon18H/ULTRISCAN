@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from packaging import version
-
 from findings.models import Finding
 from knowledge_base.models import EndOfLifeRule, MisconfigurationRule, Product, ProductAlias, VulnerabilityRule
+from scans.services.versioning import compare_versions, normalize_version, version_in_range
 
 logger = logging.getLogger(__name__)
 
@@ -62,37 +61,45 @@ class CorrelationService:
                 service.state,
             )
 
+            self._ensure_normalized_version(scan_execution, service)
+
             findings.extend(self._apply_vulnerability_rules(scan_execution, service, normalized_product))
             findings.extend(self._apply_misconfiguration_rules(scan_execution, service, normalized_product))
             findings.extend(self._apply_eol_rules(scan_execution, service, normalized_product))
         return findings
 
     def _version_in_range(self, current: str, min_version: str, max_version: str) -> bool:
-        if not current:
-            return False
-        v = version.parse(current)
-        if min_version and v < version.parse(min_version):
-            return False
-        if max_version and v > version.parse(max_version):
-            return False
-        return True
+        return version_in_range(current, min_version, max_version)
 
     def _compare_version(self, current: str, operator: str, expected: str) -> bool:
         if not current or not operator or not expected:
             return False
-        parsed_current = version.parse(current)
-        parsed_expected = version.parse(expected)
-        if operator == '<':
-            return parsed_current < parsed_expected
-        if operator == '<=':
-            return parsed_current <= parsed_expected
-        if operator == '>':
-            return parsed_current > parsed_expected
-        if operator == '>=':
-            return parsed_current >= parsed_expected
-        if operator == '==':
-            return parsed_current == parsed_expected
-        return False
+        return compare_versions(current, operator, expected)
+
+
+    def _ensure_normalized_version(self, scan_execution, service) -> None:
+        raw_version = service.raw_version or service.version
+        normalized_version = service.normalized_version or normalize_version(raw_version)
+        update_fields: list[str] = []
+
+        if raw_version and service.raw_version != raw_version:
+            service.raw_version = raw_version
+            update_fields.append('raw_version')
+
+        if normalized_version != service.normalized_version:
+            service.normalized_version = normalized_version
+            update_fields.append('normalized_version')
+
+        if update_fields:
+            service.save(update_fields=[*update_fields, 'updated_at'])
+
+        if raw_version and not normalized_version:
+            logger.warning(
+                'Scan %s service_finding=%s has non-comparable version string: %r',
+                scan_execution.id,
+                service.id,
+                raw_version,
+            )
 
     def _collect_evidence_tokens(self, service) -> set[str]:
         values = [service.service, service.product, service.normalized_product, service.banner, service.extrainfo, service.state]
@@ -144,14 +151,16 @@ class CorrelationService:
             return False, reasons
 
         if rule.version_operator and rule.version_value:
-            if not self._compare_version(service.version, rule.version_operator, rule.version_value):
+            version_candidate = service.normalized_version or service.version
+            if not self._compare_version(version_candidate, rule.version_operator, rule.version_value):
                 reasons.append(
-                    f'version compare failed ({service.version} {rule.version_operator} {rule.version_value})'
+                    f'version compare failed ({version_candidate} {rule.version_operator} {rule.version_value})'
                 )
                 return False, reasons
         elif rule.min_version or rule.max_version:
-            if not self._version_in_range(service.version, rule.min_version, rule.max_version):
-                reasons.append(f'version range failed ({service.version} not in {rule.min_version}..{rule.max_version})')
+            version_candidate = service.normalized_version or service.version
+            if not self._version_in_range(version_candidate, rule.min_version, rule.max_version):
+                reasons.append(f'version range failed ({version_candidate} not in {rule.min_version}..{rule.max_version})')
                 return False, reasons
 
         evidence_tokens = self._collect_evidence_tokens(service)
