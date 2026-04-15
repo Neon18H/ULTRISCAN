@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card metric-card"><div class="card-body">
+  <h4>Perfil</h4>
+  <p><strong>Nombre:</strong> {{ request.user.get_full_name }}</p>
+  <p><strong>Email:</strong> {{ request.user.email }}</p>
+  <p><strong>Organización:</strong> {{ membership.organization.name }}</p>
+  <p><strong>Rol:</strong> {{ membership.role }}</p>
+</div></div>
+{% endblock %}

@@ -1,4 +1,6 @@
 from django.db import models
+
+from accounts.models import Organization
 from core.models import TimeStampedModel
 from knowledge_base.models import MisconfigurationRule, VulnerabilityRule
 from scans.models import RawEvidence, ScanExecution, ServiceFinding
@@ -11,10 +13,12 @@ class Finding(TimeStampedModel):
         MEDIUM = 'medium', 'Medium'
         HIGH = 'high', 'High'
         CRITICAL = 'critical', 'Critical'
+
     class Confidence(models.TextChoices):
         LOW = 'low', 'Low'
         MEDIUM = 'medium', 'Medium'
         HIGH = 'high', 'High'
+
     class Status(models.TextChoices):
         OPEN = 'open', 'Open'
         ACCEPTED_RISK = 'accepted_risk', 'Accepted Risk'
@@ -22,6 +26,7 @@ class Finding(TimeStampedModel):
         REMEDIATED = 'remediated', 'Remediated'
         FALSE_POSITIVE = 'false_positive', 'False Positive'
 
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='findings')
     scan_execution = models.ForeignKey(ScanExecution, on_delete=models.CASCADE, related_name='findings')
     service_finding = models.ForeignKey(ServiceFinding, null=True, blank=True, on_delete=models.SET_NULL)
     raw_evidence = models.ForeignKey(RawEvidence, null=True, blank=True, on_delete=models.SET_NULL)
@@ -34,3 +39,9 @@ class Finding(TimeStampedModel):
     confidence = models.CharField(max_length=20, choices=Confidence.choices)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
     analyst_notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title

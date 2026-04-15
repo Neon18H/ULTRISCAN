@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.db import models
 
+from accounts.models import Organization
 from core.models import TimeStampedModel
 
 
@@ -25,6 +26,7 @@ class Asset(TimeStampedModel):
         ACTIVE = 'active', 'Activo'
         INACTIVE = 'inactive', 'Inactivo'
 
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='assets')
     name = models.CharField(max_length=120)
     asset_type = models.CharField(max_length=20, choices=AssetType.choices)
     value = models.CharField(max_length=255)
@@ -37,13 +39,22 @@ class Asset(TimeStampedModel):
         verbose_name = 'Activo'
         verbose_name_plural = 'Activos'
         ordering = ['-created_at']
-        indexes = [models.Index(fields=['asset_type', 'value']), models.Index(fields=['status'])]
+        unique_together = ('organization', 'asset_type', 'value')
+        indexes = [
+            models.Index(fields=['organization', 'asset_type', 'value']),
+            models.Index(fields=['organization', 'status']),
+        ]
 
     def __str__(self) -> str:
         return f'{self.name} ({self.value})'
 
     def clean(self) -> None:
-        validators = {self.AssetType.IP: self._validate_ip, self.AssetType.CIDR: self._validate_cidr, self.AssetType.DOMAIN: self._validate_domain, self.AssetType.URL: self._validate_url}
+        validators = {
+            self.AssetType.IP: self._validate_ip,
+            self.AssetType.CIDR: self._validate_cidr,
+            self.AssetType.DOMAIN: self._validate_domain,
+            self.AssetType.URL: self._validate_url,
+        }
         validator = validators.get(self.asset_type)
         if validator:
             validator()

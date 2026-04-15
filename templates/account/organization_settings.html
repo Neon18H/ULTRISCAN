@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card metric-card"><div class="card-body">
+  <h4>Configuración de organización</h4>
+  <form method="post" class="mt-3">{% csrf_token %}
+    <label class="form-label">Nombre de la organización</label>
+    <input class="form-control" name="name" value="{{ membership.organization.name }}">
+    <button class="btn btn-primary mt-3">Guardar cambios</button>
+  </form>
+</div></div>
+{% endblock %}

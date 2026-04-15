@@ -1,1 +1,1 @@
-{% extends "base.html" %}{% block content %}<h3>{{ object.name }}</h3><p><b>Tipo:</b> {{ object.asset_type }}</p><p><b>Valor:</b> {{ object.value }}</p><p><b>Descripción:</b> {{ object.description }}</p>{% endblock %}
+{% extends "base.html" %}{% block content %}<div class="card metric-card"><div class="card-body"><h3>{{ object.name }}</h3><p><b>Tipo:</b> {{ object.asset_type }}</p><p><b>Valor:</b> {{ object.value }}</p><p><b>Descripción:</b> {{ object.description|default:'-' }}</p></div></div>{% endblock %}

@@ -1,4 +1,6 @@
 from django.db import models
+
+from accounts.models import Organization
 from assets.models import Asset
 from core.models import TimeStampedModel
 from scan_profiles.models import ScanProfile
@@ -13,6 +15,7 @@ class ScanExecution(TimeStampedModel):
         FAILED = 'failed', 'Failed'
         CANCELLED = 'cancelled', 'Cancelled'
 
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='scan_executions')
     asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name='scan_executions')
     profile = models.ForeignKey(ScanProfile, on_delete=models.PROTECT, related_name='scan_executions')
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
@@ -25,6 +28,7 @@ class ScanExecution(TimeStampedModel):
 
 
 class RawEvidence(TimeStampedModel):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='raw_evidences')
     scan_execution = models.ForeignKey(ScanExecution, on_delete=models.CASCADE, related_name='raw_evidences')
     source = models.CharField(max_length=50, default='nmap')
     host = models.CharField(max_length=255)
@@ -32,6 +36,7 @@ class RawEvidence(TimeStampedModel):
 
 
 class ServiceFinding(TimeStampedModel):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='service_findings')
     scan_execution = models.ForeignKey(ScanExecution, on_delete=models.CASCADE, related_name='service_findings')
     host = models.CharField(max_length=255)
     port = models.PositiveIntegerField()
@@ -44,6 +49,7 @@ class ServiceFinding(TimeStampedModel):
 
 
 class WebFinding(TimeStampedModel):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='web_findings')
     scan_execution = models.ForeignKey(ScanExecution, on_delete=models.CASCADE, related_name='web_findings')
     host = models.CharField(max_length=255)
     url = models.URLField()
