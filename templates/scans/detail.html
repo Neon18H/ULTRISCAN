@@ -20,7 +20,19 @@
     <h5 class="mb-2">Metadata</h5>
     <div><strong>Command:</strong> <code>{{ object.command_executed|default:'N/A' }}</code></div>
     <div><strong>Options:</strong> {{ object.engine_metadata.requested_options|default:'-' }}</div>
-    {% if object.error_message %}<div class="alert alert-danger mt-3 mb-0">{{ object.error_message }}</div>{% endif %}
+    <div><strong>Fallback unprivileged:</strong> {% if object.engine_metadata.runner_metadata.fallback_used %}Sí{% else %}No{% endif %}</div>
+    {% if object.engine_metadata.runner_metadata.initial_command %}
+      <div><strong>Comando inicial:</strong> <code>{{ object.engine_metadata.runner_metadata.initial_command }}</code></div>
+    {% endif %}
+    {% if object.error_message %}<div class="alert alert-danger mt-3 mb-2">{{ object.error_message }}</div>{% endif %}
+    {% if object.engine_metadata.runner_metadata.stderr %}
+      <div class="small text-muted mt-2"><strong>stderr:</strong></div>
+      <pre class="bg-light p-2 border rounded small">{{ object.engine_metadata.runner_metadata.stderr }}</pre>
+    {% endif %}
+    {% if object.engine_metadata.runner_metadata.stdout %}
+      <div class="small text-muted mt-2"><strong>stdout:</strong></div>
+      <pre class="bg-light p-2 border rounded small">{{ object.engine_metadata.runner_metadata.stdout|truncatechars:1200 }}</pre>
+    {% endif %}
   </div>
 </div>
 
