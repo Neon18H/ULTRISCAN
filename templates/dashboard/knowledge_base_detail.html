@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header mb-4 d-flex flex-wrap justify-content-between align-items-center gap-3">
+  <div>
+    <h2 class="mb-1">{{ object.cve_id }}</h2>
+    <p class="text-muted mb-0">Detalle técnico completo del advisory NVD.</p>
+  </div>
+  <div class="d-flex gap-2">
+    {% include 'includes/severity_badge.html' with severity=object.severity %}
+    <span class="badge text-bg-light border">CVSS {{ object.cvss_score|default:'-' }}</span>
+    <span class="badge text-bg-light border">v{{ object.cvss_version|default:'-' }}</span>
+    {% if object.has_kev %}<span class="badge bg-danger">KEV</span>{% endif %}
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-xl-8">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      <h5 class="mb-3">Description</h5>
+      <p class="mb-0">{{ object.description|default:'Sin descripción disponible.' }}</p>
+    </div>
+  </div>
+  <div class="col-12 col-xl-4">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      <h5 class="mb-3">Metadata</h5>
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-muted">Source</dt><dd class="col-7">{{ object.source }}</dd>
+        <dt class="col-5 text-muted">Published</dt><dd class="col-7">{{ object.published_at|date:'Y-m-d H:i'|default:'-' }}</dd>
+        <dt class="col-5 text-muted">Modified</dt><dd class="col-7">{{ object.last_modified_at|date:'Y-m-d H:i'|default:'-' }}</dd>
+        <dt class="col-5 text-muted">Imported</dt><dd class="col-7">{{ object.created_at|date:'Y-m-d H:i'|default:'-' }}</dd>
+        <dt class="col-5 text-muted">Updated</dt><dd class="col-7">{{ object.updated_at|date:'Y-m-d H:i'|default:'-' }}</dd>
+        <dt class="col-5 text-muted">Vector</dt><dd class="col-7 text-break">{{ object.cvss_vector|default:'-' }}</dd>
+      </dl>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-xl-6">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      <h5 class="mb-3">References ({{ object.references.count }})</h5>
+      {% if object.references.all %}
+      <ul class="list-group list-group-flush">
+        {% for ref in object.references.all %}
+          <li class="list-group-item px-0">
+            <a href="{{ ref.url }}" target="_blank" rel="noopener noreferrer" class="text-break text-decoration-none">{{ ref.url }}</a>
+            {% if ref.source %}<div class="small text-muted">{{ ref.source }}</div>{% endif %}
+          </li>
+        {% empty %}
+          <li class="list-group-item px-0 text-muted">Sin referencias registradas.</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-12 col-xl-6">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      <h5 class="mb-3">Weaknesses / CWE ({{ object.weaknesses.count }})</h5>
+      {% if object.weaknesses.all %}
+      <ul class="list-group list-group-flush">
+        {% for weakness in object.weaknesses.all %}
+          <li class="list-group-item px-0">
+            <div class="fw-semibold">{{ weakness.cwe_id|default:'N/A' }}</div>
+            <div class="small text-muted">{{ weakness.description|default:'Sin descripción' }}</div>
+          </li>
+        {% empty %}
+          <li class="list-group-item px-0 text-muted">Sin weaknesses registradas.</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="surface-card p-3 p-xl-4 mb-3">
+  <h5 class="mb-3">CVSS Metrics ({{ object.metrics.count }})</h5>
+  {% if object.metrics.all %}
+  <div class="table-responsive">
+    <table class="table table-enterprise align-middle mb-0">
+      <thead>
+      <tr><th>Source</th><th>Type</th><th>Version</th><th>Severity</th><th>Base Score</th><th>Vector</th><th>Exploitability</th><th>Impact</th></tr>
+      </thead>
+      <tbody>
+      {% for metric in object.metrics.all %}
+        <tr>
+          <td>{{ metric.source|default:'-' }}</td>
+          <td>{{ metric.metric_type }}</td>
+          <td>{{ metric.cvss_version|default:'-' }}</td>
+          <td>{% include 'includes/severity_badge.html' with severity=metric.base_severity|default:object.severity %}</td>
+          <td>{{ metric.base_score|default:'-' }}</td>
+          <td class="text-break">{{ metric.vector_string|default:'-' }}</td>
+          <td>{{ metric.exploitability_score|default:'-' }}</td>
+          <td>{{ metric.impact_score|default:'-' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="mb-0 text-muted">No hay métricas CVSS registradas.</p>
+  {% endif %}
+</div>
+
+<div class="surface-card p-3 p-xl-4 mb-3">
+  <h5 class="mb-3">CPE / Configuration ({{ object.cpe_matches.count }})</h5>
+  {% if object.cpe_matches.all %}
+  <div class="table-responsive">
+    <table class="table table-enterprise align-middle mb-0">
+      <thead>
+      <tr><th>Vulnerable</th><th>Criteria</th><th>Match ID</th><th>Version Range</th></tr>
+      </thead>
+      <tbody>
+      {% for cpe in object.cpe_matches.all %}
+      <tr>
+        <td>{% if cpe.vulnerable %}<span class="badge bg-danger">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
+        <td class="text-break">{{ cpe.criteria }}</td>
+        <td class="text-break">{{ cpe.match_criteria_id|default:'-' }}</td>
+        <td class="small text-muted">
+          SI: {{ cpe.version_start_including|default:'-' }} · SE: {{ cpe.version_start_excluding|default:'-' }}<br>
+          EI: {{ cpe.version_end_including|default:'-' }} · EE: {{ cpe.version_end_excluding|default:'-' }}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="mb-0 text-muted">No hay configuraciones CPE registradas.</p>
+  {% endif %}
+</div>
+
+<div class="surface-card p-3 p-xl-4">
+  <details>
+    <summary class="fw-semibold">Raw payload (JSON)</summary>
+    <pre class="small mt-3 mb-0 bg-dark text-light rounded p-3" style="max-height: 460px; overflow:auto;">{{ object.raw_payload|pprint }}</pre>
+  </details>
+</div>
+{% endblock %}
