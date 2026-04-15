@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from django.db import transaction
+from django.db.models import Count, Min
 from django.utils import dateparse, timezone
 
 from knowledge_base.models import (
@@ -236,6 +237,26 @@ def _sync_references(advisory: ExternalAdvisory, refs: list[dict[str, Any]], ori
     }
 
 
+def _prune_duplicate_weaknesses(advisory: ExternalAdvisory) -> int:
+    duplicate_groups = (
+        ExternalAdvisoryWeakness.objects.filter(advisory=advisory)
+        .values('cwe_id')
+        .annotate(keep_id=Min('id'), row_count=Count('id'))
+        .filter(row_count__gt=1)
+    )
+
+    deleted_total = 0
+    for group in duplicate_groups:
+        deleted_count, _ = (
+            ExternalAdvisoryWeakness.objects.filter(advisory=advisory, cwe_id=group['cwe_id'])
+            .exclude(id=group['keep_id'])
+            .delete()
+        )
+        deleted_total += deleted_count
+
+    return deleted_total
+
+
 def _sync_weaknesses(advisory: ExternalAdvisory, weaknesses: list[dict[str, Any]]) -> dict[str, int]:
     deduped: dict[str, dict[str, Any]] = {}
     for row in weaknesses:
@@ -248,10 +269,13 @@ def _sync_weaknesses(advisory: ExternalAdvisory, weaknesses: list[dict[str, Any]
             'description': (row.get('description') or '').strip(),
         }
 
+    duplicate_deleted_count = _prune_duplicate_weaknesses(advisory=advisory)
+
     existing_rows = ExternalAdvisoryWeakness.objects.filter(advisory=advisory)
     existing_by_cwe = {row.cwe_id: row for row in existing_rows}
     desired_cwe_ids = set(deduped.keys())
-    deleted_count, _ = existing_rows.exclude(cwe_id__in=desired_cwe_ids).delete()
+    stale_deleted_count, _ = existing_rows.exclude(cwe_id__in=desired_cwe_ids).delete()
+    deleted_count = duplicate_deleted_count + stale_deleted_count
 
     to_create: list[ExternalAdvisoryWeakness] = []
     to_update: list[ExternalAdvisoryWeakness] = []

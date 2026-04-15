@@ -85,6 +85,38 @@ class NVDSyncTests(TestCase):
         self.assertEqual(ExternalAdvisoryWeakness.objects.filter(advisory=advisory).count(), 1)
         self.assertEqual(ExternalAdvisoryMetric.objects.filter(advisory=advisory).count(), 1)
 
+
+    def test_sync_nvd_removes_preexisting_duplicate_weakness_rows(self):
+        payload = self._payload()
+        payload['cve']['weaknesses'] = [
+            {
+                'source': 'NVD',
+                'description': [
+                    {'lang': 'en', 'value': 'CWE-120'},
+                ],
+            }
+        ]
+
+        sync_nvd_vulnerabilities(command='sync_nvd_sample', vulnerabilities=[payload])
+        advisory = ExternalAdvisory.objects.get(cve_id='CVE-2099-0001')
+
+        ExternalAdvisoryWeakness.objects.create(
+            advisory=advisory,
+            source='legacy',
+            cwe_id='CWE-120',
+            description='legacy duplicate',
+        )
+        self.assertEqual(
+            ExternalAdvisoryWeakness.objects.filter(advisory=advisory, cwe_id='CWE-120').count(),
+            2,
+        )
+
+        sync_nvd_vulnerabilities(command='sync_nvd_sample', vulnerabilities=[payload])
+
+        weaknesses = ExternalAdvisoryWeakness.objects.filter(advisory=advisory, cwe_id='CWE-120')
+        self.assertEqual(weaknesses.count(), 1)
+        self.assertEqual(weaknesses.first().source, 'NVD')
+
     @patch('knowledge_base.management.commands.sync_nvd_recent.sync_nvd_vulnerabilities')
     @patch('knowledge_base.management.commands.sync_nvd_recent.NVDClient.iter_cves')
     def test_sync_nvd_recent_reuses_last_successful_window(self, mock_iter_cves, mock_sync):

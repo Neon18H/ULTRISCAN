@@ -4,6 +4,15 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+DEDUP_WEAKNESSES_SQL = """
+DELETE FROM knowledge_base_externaladvisoryweakness target
+USING knowledge_base_externaladvisoryweakness duplicate
+WHERE target.advisory_id = duplicate.advisory_id
+  AND target.cwe_id = duplicate.cwe_id
+  AND target.id > duplicate.id;
+"""
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -71,6 +80,10 @@ class Migration(migrations.Migration):
                 ),
                 name="kb_unique_advisory_cpe_signature",
             ),
+        ),
+        migrations.RunSQL(
+            sql=DEDUP_WEAKNESSES_SQL,
+            reverse_sql=migrations.RunSQL.noop,
         ),
         migrations.AddConstraint(
             model_name="externaladvisoryweakness",
