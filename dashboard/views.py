@@ -4,7 +4,7 @@ from django.core.exceptions import PermissionDenied
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.mixins import UserPassesTestMixin
 from django.db import OperationalError, ProgrammingError
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -377,7 +377,12 @@ class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
     def get_queryset(self):
         return (
             ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD)
-            .annotate(references_count=Count('references'))
+            .annotate(
+                references_count=Count('references', distinct=True),
+                weaknesses_count=Count('weaknesses', distinct=True),
+                metrics_count=Count('metrics', distinct=True),
+                max_metric_score=Max('metrics__base_score'),
+            )
             .order_by('-last_modified_at', '-published_at', '-created_at')
         )
 

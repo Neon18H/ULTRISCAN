@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from knowledge_base.integrations.nvd_client import NVDClient
 from knowledge_base.integrations.nvd_sync import sync_nvd_vulnerabilities
+from knowledge_base.models import AdvisorySyncJob, ExternalAdvisory
 
 
 class Command(BaseCommand):
@@ -13,11 +14,31 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--hours', type=int, default=24, help='How many hours back to query by last-modified date.')
         parser.add_argument('--page-size', type=int, default=0, help='resultsPerPage override (default from settings).')
+        parser.add_argument(
+            '--force-hours-window',
+            action='store_true',
+            help='Ignore last successful sync and always use --hours window.',
+        )
 
     def handle(self, *args, **options):
         hours = max(options['hours'], 1)
         end = timezone.now()
         start = end - timedelta(hours=hours)
+
+        if not options['force_hours_window']:
+            last_successful_sync = (
+                AdvisorySyncJob.objects.filter(
+                    source=ExternalAdvisory.Source.NVD,
+                    command='sync_nvd_recent',
+                    status=AdvisorySyncJob.Status.SUCCEEDED,
+                    finished_at__isnull=False,
+                )
+                .order_by('-finished_at')
+                .values_list('finished_at', flat=True)
+                .first()
+            )
+            if last_successful_sync:
+                start = last_successful_sync
 
         filters = {
             'lastModStartDate': start.isoformat(timespec='seconds').replace('+00:00', 'Z'),
