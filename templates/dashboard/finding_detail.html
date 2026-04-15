@@ -52,25 +52,51 @@
 
     <div class="surface-card p-3 p-xl-4 mt-3">
       {% include 'includes/section_header.html' with eyebrow='NVD correlation' title='CVE correlacionada' %}
-      {% if nvd_advisory %}
+      {% if nvd_correlation.status == 'exact' and nvd_correlation.advisory %}
       <div class="d-flex gap-2 align-items-center mb-2">
-        <span class="fw-semibold">{{ nvd_advisory.cve_id }}</span>
-        {% include 'includes/severity_badge.html' with severity=nvd_advisory.severity %}
-        <span class="badge text-bg-light border">CVSS {{ nvd_advisory.cvss_score|default:'-' }}</span>
+        <span class="fw-semibold">{{ nvd_correlation.advisory.cve_id }}</span>
+        {% include 'includes/severity_badge.html' with severity=nvd_correlation.advisory.severity %}
+        <span class="badge text-bg-light border">CVSS {{ nvd_correlation.advisory.cvss_score|default:'-' }}</span>
+        {% if nvd_correlation.advisory.has_kev %}<span class="badge bg-danger-subtle text-danger border border-danger-subtle">KEV</span>{% endif %}
       </div>
-      <p class="mb-2">{{ nvd_advisory.description|default:'Sin descripción.'|truncatechars:300 }}</p>
-      <div class="small text-muted mb-2">Última actualización: {{ nvd_advisory.last_modified_at|date:'Y-m-d H:i'|default:'-' }}</div>
-      {% if nvd_references %}
+      <p class="mb-2">{{ nvd_correlation.advisory.description|default:'Sin descripción.'|truncatechars:300 }}</p>
+      <div class="small text-muted mb-2">Última actualización: {{ nvd_correlation.advisory.last_modified_at|date:'Y-m-d H:i'|default:'-' }}</div>
+      {% if nvd_correlation.references %}
       <ul class="mb-0 ps-3">
-        {% for ref in nvd_references %}
+        {% for ref in nvd_correlation.references %}
         <li><a href="{{ ref.url }}" target="_blank" rel="noopener noreferrer">{{ ref.url|truncatechars:100 }}</a></li>
         {% endfor %}
       </ul>
       {% else %}
       <p class="text-muted mb-0">Sin referencias de NVD para esta CVE.</p>
       {% endif %}
+      {% elif nvd_correlation.status == 'candidate' %}
+      <div class="alert alert-info border mb-3">
+        <i class="bi bi-stars me-1"></i>{{ nvd_correlation.message }}
+      </div>
+      <div class="table-responsive">
+        <table class="table table-enterprise align-middle mb-0">
+          <thead><tr><th>CVE</th><th>Severity</th><th>CVSS</th><th>Match score</th><th>Evidencia</th></tr></thead>
+          <tbody>
+          {% for candidate in nvd_correlation.candidates %}
+            <tr>
+              <td>
+                <a class="fw-semibold text-decoration-none" href="{% url 'knowledge-base-detail' candidate.advisory.cve_id %}">{{ candidate.advisory.cve_id }}</a>
+                <div class="small text-muted">{{ candidate.advisory.description|truncatechars:90 }}</div>
+              </td>
+              <td>{% include 'includes/severity_badge.html' with severity=candidate.advisory.severity %}</td>
+              <td>{{ candidate.advisory.cvss_score|default:'-' }}</td>
+              <td><span class="badge text-bg-light border">{{ candidate.score }}</span></td>
+              <td class="small text-muted">{{ candidate.reason|default:'Correlación heurística multi-factor' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
       {% else %}
-      <p class="text-muted mb-0">Este finding aún no está correlacionado con una CVE sincronizada desde NVD.</p>
+      <div class="alert alert-secondary border mb-0">
+        <i class="bi bi-shield-check me-1"></i>{{ nvd_correlation.message }}
+      </div>
       {% endif %}
     </div>
   </div>

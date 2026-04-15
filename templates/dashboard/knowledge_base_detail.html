@@ -3,7 +3,7 @@
 <div class="page-header mb-4 d-flex flex-wrap justify-content-between align-items-center gap-3">
   <div>
     <h2 class="mb-1">{{ object.cve_id }}</h2>
-    <p class="text-muted mb-0">Detalle técnico completo del advisory NVD.</p>
+    <p class="text-muted mb-0">Advisory NVD enriquecido para análisis técnico y priorización ejecutiva.</p>
   </div>
   <div class="d-flex gap-2">
     {% include 'includes/severity_badge.html' with severity=object.severity %}
@@ -16,13 +16,13 @@
 <div class="row g-3 mb-3">
   <div class="col-12 col-xl-8">
     <div class="surface-card p-3 p-xl-4 h-100">
-      <h5 class="mb-3">Description</h5>
+      {% include 'includes/section_header.html' with eyebrow='Executive summary' title='Description' %}
       <p class="mb-0">{{ object.description|default:'Sin descripción disponible.' }}</p>
     </div>
   </div>
   <div class="col-12 col-xl-4">
     <div class="surface-card p-3 p-xl-4 h-100">
-      <h5 class="mb-3">Metadata</h5>
+      {% include 'includes/section_header.html' with eyebrow='Advisory metadata' title='Metadata' %}
       <dl class="row mb-0 small">
         <dt class="col-5 text-muted">Source</dt><dd class="col-7">{{ object.source }}</dd>
         <dt class="col-5 text-muted">Published</dt><dd class="col-7">{{ object.published_at|date:'Y-m-d H:i'|default:'-' }}</dd>
@@ -35,10 +35,24 @@
   </div>
 </div>
 
+<div class="surface-card p-3 p-xl-4 mb-3">
+  {% include 'includes/section_header.html' with eyebrow='Impact map' title='Affected technologies' %}
+  {% if technology_labels %}
+  <div class="d-flex flex-wrap gap-2">
+    {% for label in technology_labels %}
+    <span class="badge text-bg-light border px-3 py-2">{{ label }}</span>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-muted mb-0">No se encontraron tecnologías derivadas de CPE para este advisory.</p>
+  {% endif %}
+</div>
+
 <div class="row g-3 mb-3">
   <div class="col-12 col-xl-6">
     <div class="surface-card p-3 p-xl-4 h-100">
-      <h5 class="mb-3">References ({{ object.references.count }})</h5>
+      {% include 'includes/section_header.html' with eyebrow='Threat intel links' title='References' %}
+      <h6 class="mb-3">Total: {{ object.references.count }}</h6>
       {% if object.references.all %}
       <ul class="list-group list-group-flush">
         {% for ref in object.references.all %}
@@ -55,7 +69,8 @@
   </div>
   <div class="col-12 col-xl-6">
     <div class="surface-card p-3 p-xl-4 h-100">
-      <h5 class="mb-3">Weaknesses / CWE ({{ object.weaknesses.count }})</h5>
+      {% include 'includes/section_header.html' with eyebrow='Weakness analysis' title='Weaknesses / CWE' %}
+      <h6 class="mb-3">Total: {{ object.weaknesses.count }}</h6>
       {% if object.weaknesses.all %}
       <ul class="list-group list-group-flush">
         {% for weakness in object.weaknesses.all %}
@@ -73,7 +88,8 @@
 </div>
 
 <div class="surface-card p-3 p-xl-4 mb-3">
-  <h5 class="mb-3">CVSS Metrics ({{ object.metrics.count }})</h5>
+  {% include 'includes/section_header.html' with eyebrow='Scoring' title='CVSS Metrics' %}
+  <h6 class="mb-3">Total: {{ object.metrics.count }}</h6>
   {% if object.metrics.all %}
   <div class="table-responsive">
     <table class="table table-enterprise align-middle mb-0">
@@ -102,7 +118,8 @@
 </div>
 
 <div class="surface-card p-3 p-xl-4 mb-3">
-  <h5 class="mb-3">CPE / Configuration ({{ object.cpe_matches.count }})</h5>
+  {% include 'includes/section_header.html' with eyebrow='Configuration graph' title='CPE / Configuration' %}
+  <h6 class="mb-3">Total: {{ object.cpe_matches.count }}</h6>
   {% if object.cpe_matches.all %}
   <div class="table-responsive">
     <table class="table table-enterprise align-middle mb-0">
