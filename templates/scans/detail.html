@@ -48,7 +48,7 @@
             <td>{{ service.host }}</td>
             <td>{{ service.port }}/{{ service.protocol }}</td>
             <td>{{ service.service|default:'-' }}</td>
-            <td>{{ service.product|default:'-' }} {{ service.version|default:'' }}</td>
+            <td>{{ service.product|default:'-' }}<br><small class='text-muted'>Raw: {{ service.raw_version|default:service.version|default:'-' }}</small>{% if service.normalized_version %}<br><small class='text-muted'>Normalized: {{ service.normalized_version }}</small>{% endif %}</td>
             <td>{{ service.state }}</td>
           </tr>
           {% empty %}

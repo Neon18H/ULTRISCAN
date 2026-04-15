@@ -9,6 +9,7 @@ from integrations.parsers.nmap_parser import NmapXmlParser
 from integrations.runners.nmap_runner import NmapRunner
 
 from .models import RawEvidence, ScanExecution, ServiceFinding
+from .services.versioning import normalize_version
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,17 @@ def run_scan_task(self, scan_execution_id: int) -> None:
                     metadata={'stderr': run_result.stderr, 'stdout': run_result.stdout, 'runner_metadata': runner_metadata},
                 )
                 for parsed_service in parsed_host.ports:
+                    raw_version = parsed_service.version
+                    normalized_version = normalize_version(raw_version)
+                    if raw_version and not normalized_version:
+                        logger.warning(
+                            'Scan %s service %s:%s/%s has non-normalizable version: %r',
+                            scan.id,
+                            parsed_host.host,
+                            parsed_service.port,
+                            parsed_service.protocol,
+                            raw_version,
+                        )
                     ServiceFinding.objects.create(
                         organization=scan.organization,
                         scan_execution=scan,
@@ -105,7 +117,9 @@ def run_scan_task(self, scan_execution_id: int) -> None:
                         state=parsed_service.state,
                         service=parsed_service.service,
                         product=parsed_service.product,
-                        version=parsed_service.version,
+                        version=raw_version,
+                        raw_version=raw_version,
+                        normalized_version=normalized_version,
                         extrainfo=parsed_service.extrainfo,
                         banner=parsed_service.banner,
                         scripts=[vars(script) for script in parsed_service.scripts],
