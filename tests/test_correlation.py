@@ -3,9 +3,9 @@ from django.test import TestCase
 
 from accounts.models import Organization, OrganizationMembership
 from assets.models import Asset
-from knowledge_base.models import MisconfigurationRule, Product, ProductAlias, RemediationTemplate, VulnerabilityRule
+from knowledge_base.models import EndOfLifeRule, MisconfigurationRule, Product, ProductAlias, RemediationTemplate, VulnerabilityRule
 from scan_profiles.models import ScanProfile
-from scans.models import ScanExecution, ServiceFinding
+from scans.models import RawEvidence, ScanExecution, ServiceFinding
 from scans.services.correlation_service import CorrelationService
 
 
@@ -204,3 +204,84 @@ class CorrelationTests(TestCase):
         findings = CorrelationService().correlate_scan_execution(self.scan)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].title, 'Port 9200 exposed')
+
+    def test_does_not_create_php_or_wordpress_findings_without_explicit_evidence(self):
+        php = Product.objects.create(name='PHP')
+        wordpress = Product.objects.create(name='WordPress')
+        rem = RemediationTemplate.objects.create(title='r6', body='upgrade')
+        VulnerabilityRule.objects.create(
+            title='PHP unsupported or near EOL branch',
+            product=php,
+            required_state='open',
+            version_operator='<=',
+            version_value='8.1.99',
+            severity='high',
+            confidence='medium',
+            description='desc',
+            remediation_template=rem,
+        )
+        EndOfLifeRule.objects.create(
+            title='WordPress below maintained baseline',
+            product=wordpress,
+            required_state='open',
+            version_operator='<',
+            version_value='6.3.0',
+            severity='medium',
+            confidence='medium',
+            description='desc',
+            remediation_template=rem,
+        )
+
+        ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=3306,
+            protocol='tcp',
+            state='open',
+            service='mysql',
+            product='MySQL',
+            version='5.7.36',
+            raw_version='5.7.36',
+            normalized_version='5.7.36',
+        )
+
+        findings = CorrelationService().correlate_scan_execution(self.scan)
+        finding_titles = {item.title for item in findings}
+        self.assertNotIn('PHP unsupported or near EOL branch', finding_titles)
+        self.assertNotIn('WordPress below maintained baseline', finding_titles)
+
+    def test_associates_raw_evidence_and_trace_to_matched_service(self):
+        raw_evidence = RawEvidence.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            source='nmap',
+            host='10.0.0.10',
+            payload={
+                'host': '10.0.0.10',
+                'ports': [
+                    {'port': 80, 'protocol': 'tcp', 'service': 'http', 'product': 'Apache httpd', 'version': '2.4.40'}
+                ],
+            },
+            metadata={'collector': 'test'},
+        )
+        ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=80,
+            protocol='tcp',
+            state='open',
+            service='http',
+            product='Apache httpd',
+            version='2.4.40',
+            raw_version='2.4.40',
+            normalized_version='2.4.40',
+        )
+
+        findings = CorrelationService().correlate_scan_execution(self.scan)
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding.raw_evidence_id, raw_evidence.id)
+        self.assertEqual(finding.correlation_trace['source_evidence']['port'], 80)
+        self.assertEqual(finding.correlation_trace['detected_version']['version_used_for_matching'], '2.4.40')
