@@ -14,6 +14,7 @@ from django.views.generic import CreateView, DetailView, ListView, TemplateView,
 from accounts.tenancy import TenantQuerysetMixin, get_active_membership, get_active_organization
 from assets.models import Asset
 from findings.models import Finding
+from findings.nvd_correlation import FindingNvdCorrelationService
 from knowledge_base.models import AdvisorySyncJob, ExternalAdvisory, VulnerabilityRule
 from scan_profiles.models import ScanProfile
 from scans.models import ScanExecution, ServiceFinding
@@ -319,22 +320,10 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        cve_id = ''
-        if self.object.vulnerability_rule and self.object.vulnerability_rule.cve:
-            cve_id = self.object.vulnerability_rule.cve.strip().upper()
-
-        context['nvd_advisory'] = None
-        context['nvd_references'] = []
-        if cve_id:
-            advisory = safe_query(
-                None,
-                lambda: ExternalAdvisory.objects.filter(cve_id=cve_id)
-                .prefetch_related('references')
-                .first(),
-            )
-            context['nvd_advisory'] = advisory
-            if advisory:
-                context['nvd_references'] = list(advisory.references.all()[:5])
+        context['nvd_correlation'] = safe_query(
+            FindingNvdCorrelationService()._no_match_payload(self.object),
+            lambda: FindingNvdCorrelationService().correlate(self.object),
+        )
         return context
 
 
@@ -481,6 +470,7 @@ class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
         context['nvd_medium_total'] = safe_query(0, lambda: base_query.filter(severity='medium').count())
         context['nvd_low_total'] = safe_query(0, lambda: base_query.filter(severity='low').count())
         context['nvd_info_total'] = safe_query(0, lambda: base_query.filter(severity='info').count())
+        context['nvd_kev_total'] = safe_query(0, lambda: base_query.filter(has_kev=True).count())
         context['nvd_last_sync_at'] = safe_query(
             None,
             lambda: AdvisorySyncJob.objects.filter(
@@ -496,10 +486,75 @@ class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
             [],
             lambda: list(AdvisorySyncJob.objects.filter(source=ExternalAdvisory.Source.NVD).order_by('-created_at')[:10]),
         )
+        context['severity_distribution'] = self._build_severity_distribution(base_query)
+        context['top_technologies'] = self._build_top_technologies()
+        context['recent_advisories'] = safe_query(
+            [],
+            lambda: list(
+                base_query.order_by('-last_modified_at', '-published_at')[:8]
+            ),
+        )
         context['active_filter_chips'] = self.get_active_filter_chips()
         context['result_count'] = self.object_list.count()
         context['current_querystring'] = self.get_querystring_without_page()
         return context
+
+    def _build_severity_distribution(self, base_query):
+        rows = safe_query([], lambda: list(base_query.values('severity').annotate(total=Count('id'))))
+        total = sum(row['total'] for row in rows) or 1
+        order = ['critical', 'high', 'medium', 'low', 'info']
+        lookup = {row['severity']: row['total'] for row in rows}
+        return [
+            {
+                'severity': sev,
+                'total': lookup.get(sev, 0),
+                'percentage': round((lookup.get(sev, 0) / total) * 100, 1),
+            }
+            for sev in order
+        ]
+
+    def _build_top_technologies(self):
+        cpe_rows = safe_query(
+            [],
+            lambda: list(
+                ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD)
+                .values('id', 'last_modified_at', 'severity', 'cpe_matches__criteria')
+            ),
+        )
+        technology_bucket: dict[str, dict] = {}
+        for row in cpe_rows:
+            criteria = row.get('cpe_matches__criteria') or ''
+            parts = criteria.split(':')
+            if len(parts) < 6:
+                continue
+            vendor = (parts[3] or '').replace('_', ' ').strip()
+            product = (parts[4] or '').replace('_', ' ').strip()
+            if not product:
+                continue
+            label = f'{vendor} {product}'.strip()
+            item = technology_bucket.setdefault(
+                label,
+                {
+                    'technology': label,
+                    'count': 0,
+                    'critical_high': 0,
+                    'last_modified_at': row.get('last_modified_at'),
+                    'advisory_ids': set(),
+                },
+            )
+            advisory_id = row['id']
+            if advisory_id in item['advisory_ids']:
+                continue
+            item['advisory_ids'].add(advisory_id)
+            item['count'] += 1
+            if row.get('severity') in {'critical', 'high'}:
+                item['critical_high'] += 1
+            if row.get('last_modified_at') and (
+                not item['last_modified_at'] or row['last_modified_at'] > item['last_modified_at']
+            ):
+                item['last_modified_at'] = row['last_modified_at']
+        ranked = sorted(technology_bucket.values(), key=lambda x: x['count'], reverse=True)[:10]
+        return ranked
 
     def test_func(self):
         if self.request.user.is_staff:
@@ -522,6 +577,20 @@ class KnowledgeBaseDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailVie
             .prefetch_related('references', 'weaknesses', 'metrics', 'cpe_matches')
             .order_by('-last_modified_at')
         )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        technology_labels = []
+        for cpe in self.object.cpe_matches.all():
+            parts = cpe.criteria.split(':')
+            if len(parts) < 6:
+                continue
+            vendor = (parts[3] or '').replace('_', ' ').strip()
+            product = (parts[4] or '').replace('_', ' ').strip()
+            if product:
+                technology_labels.append(f'{vendor} {product}'.strip())
+        context['technology_labels'] = sorted(set(technology_labels))
+        return context
 
     def test_func(self):
         if self.request.user.is_staff:

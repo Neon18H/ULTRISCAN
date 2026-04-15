@@ -17,7 +17,80 @@
   <div class="col-sm-6 col-xl-2">{% include 'includes/metrics_card.html' with title='Medium' value=nvd_medium_total icon='bi-exclamation-circle' helper='Seguimiento continuo' %}</div>
   <div class="col-sm-6 col-xl-1">{% include 'includes/metrics_card.html' with title='Low' value=nvd_low_total icon='bi-info-circle' helper='Bajo impacto' %}</div>
   <div class="col-sm-6 col-xl-1">{% include 'includes/metrics_card.html' with title='Info' value=nvd_info_total icon='bi-dot' helper='Contexto' %}</div>
+  <div class="col-sm-6 col-xl-2">{% include 'includes/metrics_card.html' with title='KEV' value=nvd_kev_total icon='bi-lightning-charge' helper='Known exploited' %}</div>
   <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Last NVD sync' value=nvd_last_sync_at|date:'Y-m-d H:i'|default:'-' icon='bi-clock-history' helper='Último sync exitoso' %}</div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-xxl-4">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      {% include 'includes/section_header.html' with eyebrow='Severity analytics' title='Distribution by severity' %}
+      <div class="d-flex flex-column gap-3">
+        {% for item in severity_distribution %}
+        <div>
+          <div class="d-flex justify-content-between small mb-1">
+            <span class="text-uppercase fw-semibold">{{ item.severity }}</span>
+            <span class="text-muted">{{ item.total }} ({{ item.percentage }}%)</span>
+          </div>
+          <div class="progress" role="progressbar" aria-valuenow="{{ item.percentage }}" aria-valuemin="0" aria-valuemax="100" style="height:8px;">
+            <div class="progress-bar bg-enterprise-{{ item.severity }}" style="width: {{ item.percentage }}%"></div>
+          </div>
+        </div>
+        {% empty %}
+        <p class="text-muted mb-0">Sin datos de severidad aún.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-xxl-8">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      {% include 'includes/section_header.html' with eyebrow='Technology posture' title='Most affected technologies' %}
+      {% if top_technologies %}
+      <div class="table-responsive">
+        <table class="table table-enterprise align-middle mb-0">
+          <thead><tr><th>Tecnología</th><th>Total CVEs</th><th>Critical/High</th><th>Heat</th><th>Última actualización</th></tr></thead>
+          <tbody>
+            {% for tech in top_technologies %}
+            <tr>
+              <td class="fw-semibold">{{ tech.technology }}</td>
+              <td>{{ tech.count }}</td>
+              <td>{{ tech.critical_high }}</td>
+              <td style="min-width:170px;">
+                <div class="progress" style="height:8px;">
+                  <div class="progress-bar bg-primary" style="width:{% widthratio tech.count top_technologies.0.count 100 %}%"></div>
+                </div>
+              </td>
+              <td class="small text-muted">{{ tech.last_modified_at|date:'Y-m-d H:i'|default:'-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0">Aún no hay CPE/configuration para construir ranking por tecnología.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="surface-card p-3 p-xl-4 mb-3">
+  {% include 'includes/section_header.html' with eyebrow='Live feed' title='Recently synced advisories' %}
+  <div class="row g-3">
+    {% for advisory in recent_advisories %}
+    <div class="col-12 col-md-6 col-xl-3">
+      <a href="{% url 'knowledge-base-detail' advisory.cve_id %}" class="advisory-feed-card text-decoration-none d-block h-100">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+          <span class="fw-semibold">{{ advisory.cve_id }}</span>
+          {% include 'includes/severity_badge.html' with severity=advisory.severity %}
+        </div>
+        <p class="small text-muted mb-2">{{ advisory.description|truncatechars:110 }}</p>
+        <div class="small text-muted">Modified {{ advisory.last_modified_at|date:'Y-m-d H:i'|default:'-' }}</div>
+      </a>
+    </div>
+    {% empty %}
+    <div class="col-12"><p class="text-muted mb-0">Sin advisories recientes disponibles.</p></div>
+    {% endfor %}
+  </div>
 </div>
 
 <div class="surface-card p-3 p-xl-4 mb-3">
