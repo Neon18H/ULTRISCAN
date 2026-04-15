@@ -16,17 +16,19 @@
   {% if object_list %}
   <div class="table-responsive">
     <table class='table table-enterprise align-middle'>
-      <thead><tr><th>CVE ID</th><th>Severity</th><th>CVSS</th><th>Source</th><th>Published</th><th>Modified</th><th>References</th></tr></thead>
+      <thead><tr><th>CVE ID</th><th>Severity</th><th>CVSS</th><th>Source</th><th>Published</th><th>Modified</th><th>References</th><th>Weaknesses</th><th>Metrics</th></tr></thead>
       <tbody>
       {% for obj in object_list %}
       <tr>
         <td class="fw-semibold">{{ obj.cve_id }}</td>
         <td>{% include 'includes/severity_badge.html' with severity=obj.severity %}</td>
-        <td>{{ obj.cvss_score|default:'-' }}</td>
+        <td>{{ obj.cvss_score|default:obj.max_metric_score|default:'-' }}</td>
         <td>{{ obj.source }}</td>
         <td>{{ obj.published_at|date:'Y-m-d H:i'|default:'-' }}</td>
         <td>{{ obj.last_modified_at|date:'Y-m-d H:i'|default:'-' }}</td>
         <td>{{ obj.references_count }}</td>
+        <td>{{ obj.weaknesses_count }}</td>
+        <td>{{ obj.metrics_count }}</td>
       </tr>
       {% endfor %}
       </tbody>

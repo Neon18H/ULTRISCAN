@@ -133,6 +133,31 @@ class ExternalAdvisoryWeakness(TimeStampedModel):
     class Meta:
         ordering = ['advisory_id', 'cwe_id', 'id']
         indexes = [models.Index(fields=['cwe_id'])]
+        constraints = [
+            models.UniqueConstraint(fields=['advisory', 'cwe_id'], name='kb_unique_advisory_cwe'),
+        ]
+
+
+class ExternalAdvisoryMetric(TimeStampedModel):
+    advisory = models.ForeignKey(ExternalAdvisory, on_delete=models.CASCADE, related_name='metrics')
+    source = models.CharField(max_length=255, blank=True)
+    metric_type = models.CharField(max_length=40)
+    cvss_version = models.CharField(max_length=20, blank=True)
+    base_score = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    base_severity = models.CharField(max_length=20, blank=True)
+    vector_string = models.CharField(max_length=255, blank=True)
+    exploitability_score = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    impact_score = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['advisory_id', 'metric_type', 'source', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['advisory', 'source', 'metric_type', 'cvss_version'],
+                name='kb_unique_advisory_metric_signature',
+            ),
+        ]
 
 
 class ExternalAdvisoryCpeMatch(TimeStampedModel):
@@ -147,7 +172,19 @@ class ExternalAdvisoryCpeMatch(TimeStampedModel):
 
     class Meta:
         ordering = ['advisory_id', 'id']
-        unique_together = [('advisory', 'criteria', 'match_criteria_id')]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'advisory',
+                    'criteria',
+                    'version_start_including',
+                    'version_start_excluding',
+                    'version_end_including',
+                    'version_end_excluding',
+                ],
+                name='kb_unique_advisory_cpe_signature',
+            ),
+        ]
 
 
 class AdvisorySyncJob(TimeStampedModel):

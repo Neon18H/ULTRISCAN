@@ -13,6 +13,7 @@ from knowledge_base.models import (
     AdvisorySyncJob,
     ExternalAdvisory,
     ExternalAdvisoryCpeMatch,
+    ExternalAdvisoryMetric,
     ExternalAdvisoryReference,
     ExternalAdvisoryWeakness,
 )
@@ -121,6 +122,38 @@ def _extract_cpe_matches(cve: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in rows if item['criteria']]
 
 
+def _extract_metrics(cve: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    metrics = cve.get('metrics') or {}
+
+    for metric_type, entries in metrics.items():
+        if not isinstance(entries, list):
+            continue
+
+        for item in entries:
+            cvss_data = item.get('cvssData') or {}
+            source = (item.get('source') or '').strip()
+            rows.append(
+                {
+                    'source': source,
+                    'metric_type': metric_type,
+                    'cvss_version': cvss_data.get('version') or '',
+                    'base_score': _safe_decimal(cvss_data.get('baseScore')),
+                    'base_severity': (cvss_data.get('baseSeverity') or '').lower(),
+                    'vector_string': cvss_data.get('vectorString') or '',
+                    'exploitability_score': _safe_decimal(item.get('exploitabilityScore')),
+                    'impact_score': _safe_decimal(item.get('impactScore')),
+                    'raw_payload': item,
+                }
+            )
+
+    deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (row['source'], row['metric_type'], row['cvss_version'])
+        deduped[key] = row
+    return list(deduped.values())
+
+
 def _extract_references(cve: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
     deduped: dict[str, dict[str, Any]] = {}
     original_count = 0
@@ -203,16 +236,221 @@ def _sync_references(advisory: ExternalAdvisory, refs: list[dict[str, Any]], ori
     }
 
 
-def _upsert_related(advisory: ExternalAdvisory, refs: list[dict[str, Any]], refs_original_count: int, weaknesses: list[dict[str, Any]], cpe_matches: list[dict[str, Any]]) -> None:
+def _sync_weaknesses(advisory: ExternalAdvisory, weaknesses: list[dict[str, Any]]) -> dict[str, int]:
+    deduped: dict[str, dict[str, Any]] = {}
+    for row in weaknesses:
+        cwe_id = (row.get('cwe_id') or '').strip()
+        if not cwe_id:
+            continue
+        deduped[cwe_id] = {
+            'source': (row.get('source') or '').strip(),
+            'cwe_id': cwe_id,
+            'description': (row.get('description') or '').strip(),
+        }
+
+    existing_rows = ExternalAdvisoryWeakness.objects.filter(advisory=advisory)
+    existing_by_cwe = {row.cwe_id: row for row in existing_rows}
+    desired_cwe_ids = set(deduped.keys())
+    deleted_count, _ = existing_rows.exclude(cwe_id__in=desired_cwe_ids).delete()
+
+    to_create: list[ExternalAdvisoryWeakness] = []
+    to_update: list[ExternalAdvisoryWeakness] = []
+
+    for cwe_id, item in deduped.items():
+        existing = existing_by_cwe.get(cwe_id)
+        if existing is None:
+            to_create.append(ExternalAdvisoryWeakness(advisory=advisory, **item))
+            continue
+
+        changed = False
+        if existing.source != item['source']:
+            existing.source = item['source']
+            changed = True
+        if existing.description != item['description']:
+            existing.description = item['description']
+            changed = True
+        if changed:
+            to_update.append(existing)
+
+    if to_create:
+        ExternalAdvisoryWeakness.objects.bulk_create(to_create, ignore_conflicts=True)
+    if to_update:
+        ExternalAdvisoryWeakness.objects.bulk_update(to_update, ['source', 'description', 'updated_at'])
+
+    ignored_count = max(len(weaknesses) - len(deduped), 0)
+    logger.info(
+        'NVD weaknesses synced cve_id=%s deduped=%s created=%s updated=%s ignored=%s deleted=%s',
+        advisory.cve_id,
+        len(deduped),
+        len(to_create),
+        len(to_update),
+        ignored_count,
+        deleted_count,
+    )
+    return {
+        'deduped': len(deduped),
+        'created': len(to_create),
+        'updated': len(to_update),
+        'ignored': ignored_count,
+        'deleted': deleted_count,
+    }
+
+
+def _sync_cpe_matches(advisory: ExternalAdvisory, cpe_matches: list[dict[str, Any]]) -> dict[str, int]:
+    deduped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    for row in cpe_matches:
+        key = (
+            (row.get('criteria') or '').strip(),
+            (row.get('version_start_including') or '').strip(),
+            (row.get('version_start_excluding') or '').strip(),
+            (row.get('version_end_including') or '').strip(),
+            (row.get('version_end_excluding') or '').strip(),
+        )
+        if not key[0]:
+            continue
+        deduped[key] = {
+            'vulnerable': bool(row.get('vulnerable', False)),
+            'criteria': key[0],
+            'match_criteria_id': (row.get('match_criteria_id') or '').strip(),
+            'version_start_including': key[1],
+            'version_start_excluding': key[2],
+            'version_end_including': key[3],
+            'version_end_excluding': key[4],
+        }
+
+    existing_rows = ExternalAdvisoryCpeMatch.objects.filter(advisory=advisory)
+    existing_by_signature = {
+        (
+            row.criteria,
+            row.version_start_including,
+            row.version_start_excluding,
+            row.version_end_including,
+            row.version_end_excluding,
+        ): row
+        for row in existing_rows
+    }
+    desired_signatures = set(deduped.keys())
+
+    stale_ids = [
+        row.id
+        for signature, row in existing_by_signature.items()
+        if signature not in desired_signatures
+    ]
+    deleted_count, _ = ExternalAdvisoryCpeMatch.objects.filter(id__in=stale_ids).delete()
+
+    to_create: list[ExternalAdvisoryCpeMatch] = []
+    to_update: list[ExternalAdvisoryCpeMatch] = []
+
+    for signature, item in deduped.items():
+        existing = existing_by_signature.get(signature)
+        if existing is None:
+            to_create.append(ExternalAdvisoryCpeMatch(advisory=advisory, **item))
+            continue
+
+        changed = False
+        if existing.vulnerable != item['vulnerable']:
+            existing.vulnerable = item['vulnerable']
+            changed = True
+        if existing.match_criteria_id != item['match_criteria_id']:
+            existing.match_criteria_id = item['match_criteria_id']
+            changed = True
+        if changed:
+            to_update.append(existing)
+
+    if to_create:
+        ExternalAdvisoryCpeMatch.objects.bulk_create(to_create, ignore_conflicts=True)
+    if to_update:
+        ExternalAdvisoryCpeMatch.objects.bulk_update(to_update, ['vulnerable', 'match_criteria_id', 'updated_at'])
+
+    ignored_count = max(len(cpe_matches) - len(deduped), 0)
+    logger.info(
+        'NVD CPE matches synced cve_id=%s deduped=%s created=%s updated=%s ignored=%s deleted=%s',
+        advisory.cve_id,
+        len(deduped),
+        len(to_create),
+        len(to_update),
+        ignored_count,
+        deleted_count,
+    )
+    return {
+        'deduped': len(deduped),
+        'created': len(to_create),
+        'updated': len(to_update),
+        'ignored': ignored_count,
+        'deleted': deleted_count,
+    }
+
+
+def _sync_metrics(advisory: ExternalAdvisory, metrics: list[dict[str, Any]]) -> dict[str, int]:
+    existing_rows = ExternalAdvisoryMetric.objects.filter(advisory=advisory)
+    existing_by_signature = {
+        (row.source, row.metric_type, row.cvss_version): row
+        for row in existing_rows
+    }
+    desired_signatures = {(item['source'], item['metric_type'], item['cvss_version']) for item in metrics}
+    stale_ids = [
+        row.id
+        for signature, row in existing_by_signature.items()
+        if signature not in desired_signatures
+    ]
+    deleted_count, _ = ExternalAdvisoryMetric.objects.filter(id__in=stale_ids).delete()
+
+    to_create: list[ExternalAdvisoryMetric] = []
+    to_update: list[ExternalAdvisoryMetric] = []
+
+    for item in metrics:
+        signature = (item['source'], item['metric_type'], item['cvss_version'])
+        existing = existing_by_signature.get(signature)
+        if existing is None:
+            to_create.append(ExternalAdvisoryMetric(advisory=advisory, **item))
+            continue
+
+        changed = False
+        for field in ('base_score', 'base_severity', 'vector_string', 'exploitability_score', 'impact_score', 'raw_payload'):
+            if getattr(existing, field) != item[field]:
+                setattr(existing, field, item[field])
+                changed = True
+        if changed:
+            to_update.append(existing)
+
+    if to_create:
+        ExternalAdvisoryMetric.objects.bulk_create(to_create, ignore_conflicts=True)
+    if to_update:
+        ExternalAdvisoryMetric.objects.bulk_update(
+            to_update,
+            ['base_score', 'base_severity', 'vector_string', 'exploitability_score', 'impact_score', 'raw_payload', 'updated_at'],
+        )
+
+    logger.info(
+        'NVD metrics synced cve_id=%s deduped=%s created=%s updated=%s ignored=%s deleted=%s',
+        advisory.cve_id,
+        len(metrics),
+        len(to_create),
+        len(to_update),
+        0,
+        deleted_count,
+    )
+    return {
+        'deduped': len(metrics),
+        'created': len(to_create),
+        'updated': len(to_update),
+        'ignored': 0,
+        'deleted': deleted_count,
+    }
+
+
+def _upsert_related(
+    advisory: ExternalAdvisory,
+    refs: list[dict[str, Any]],
+    refs_original_count: int,
+    weaknesses: list[dict[str, Any]],
+    cpe_matches: list[dict[str, Any]],
+    metrics: list[dict[str, Any]],
+) -> None:
     _sync_references(advisory=advisory, refs=refs, original_count=refs_original_count)
-
-    advisory.weaknesses.all().delete()
-    advisory.cpe_matches.all().delete()
-
-    if weaknesses:
-        ExternalAdvisoryWeakness.objects.bulk_create([ExternalAdvisoryWeakness(advisory=advisory, **item) for item in weaknesses])
-    if cpe_matches:
-        ExternalAdvisoryCpeMatch.objects.bulk_create([ExternalAdvisoryCpeMatch(advisory=advisory, **item) for item in cpe_matches])
+    _sync_weaknesses(advisory=advisory, weaknesses=weaknesses)
+    _sync_cpe_matches(advisory=advisory, cpe_matches=cpe_matches)
+    _sync_metrics(advisory=advisory, metrics=metrics)
 
 
 def sync_nvd_vulnerabilities(command: str, vulnerabilities: Iterable[dict[str, Any]], filters: dict[str, Any] | None = None) -> AdvisorySyncJob:
@@ -235,6 +473,7 @@ def sync_nvd_vulnerabilities(command: str, vulnerabilities: Iterable[dict[str, A
             try:
                 cvss_data = _extract_cvss(cve)
                 references, refs_original_count = _extract_references(cve)
+                metrics = _extract_metrics(cve)
                 metadata = {
                     'source_identifier': cve.get('sourceIdentifier') or '',
                     'vuln_status': cve.get('vulnStatus') or '',
@@ -266,12 +505,15 @@ def sync_nvd_vulnerabilities(command: str, vulnerabilities: Iterable[dict[str, A
                         refs_original_count=refs_original_count,
                         weaknesses=_extract_weaknesses(cve),
                         cpe_matches=_extract_cpe_matches(cve),
+                        metrics=metrics,
                     )
 
                 if created:
                     created_count += 1
+                    logger.info('NVD advisory created cve_id=%s', cve_id)
                 else:
                     updated_count += 1
+                    logger.info('NVD advisory updated cve_id=%s', cve_id)
             except Exception as exc:
                 errors_count += 1
                 error_detail = f'{cve_id}: {exc}'
