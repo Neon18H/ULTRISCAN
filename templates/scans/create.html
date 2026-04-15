@@ -1,35 +1,58 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-header mb-4">
-  <h2 class="mb-1">Run Scan</h2>
-  <p class="text-muted mb-0">Configura un escaneo para el activo seleccionado.</p>
+<div class="page-header d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="mb-1">New Scan</h2>
+    <p class="text-muted mb-0">Lanza ejecuciones reales desde la UI con encolado asíncrono en Celery.</p>
+  </div>
+  <a href="{% url 'scans-list' %}" class="btn btn-outline-secondary">View all scans</a>
 </div>
 
 <div class="card metric-card">
   <div class="card-body">
-    <div class="row g-4">
-      <div class="col-lg-5">
-        <h6 class="text-uppercase text-muted">Activo seleccionado</h6>
-        <p class="mb-1"><strong>{{ asset.name }}</strong></p>
-        <p class="mb-1 text-muted">{{ asset.asset_type }} · {{ asset.value }}</p>
-        <a href="{% url 'assets-detail' asset.id %}" class="small">Ver detalle del activo</a>
+    <form method="post" class="row g-3">
+      {% csrf_token %}
+      <div class="col-md-6">
+        <label class="form-label">{{ form.asset.label }}</label>
+        {{ form.asset }}
+        {{ form.asset.errors }}
       </div>
-      <div class="col-lg-7">
-        <form method="post" class="row g-3">
-          {% csrf_token %}
-          <input type="hidden" name="asset_id" value="{{ asset.id }}">
-          <div class="col-12">
-            <label class="form-label">{{ form.profile.label }}</label>
-            {{ form.profile }}
-            {% if form.profile.errors %}<div class="text-danger small mt-1">{{ form.profile.errors }}</div>{% endif %}
-          </div>
-          <div class="col-12 d-flex justify-content-end gap-2">
-            <a href="{% url 'assets-detail' asset.id %}" class="btn btn-outline-secondary">Cancelar</a>
-            <button type="submit" class="btn btn-primary"><i class="bi bi-rocket-takeoff me-1"></i>Ejecutar escaneo</button>
-          </div>
-        </form>
+      <div class="col-md-6">
+        <label class="form-label">{{ form.profile.label }}</label>
+        {{ form.profile }}
+        <div class="form-text">El perfil debe corresponder al tipo de escaneo.</div>
+        {{ form.profile.errors }}
       </div>
-    </div>
+      <div class="col-md-6">
+        <label class="form-label">{{ form.scan_type.label }}</label>
+        {{ form.scan_type }}
+        {% if form.scan_type.help_text %}<div class="form-text">{{ form.scan_type.help_text }}</div>{% endif %}
+        {{ form.scan_type.errors }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">{{ form.module.label }}</label>
+        {{ form.module }}
+        {{ form.module.errors }}
+      </div>
+      <div class="col-12">
+        <div class="small text-muted mb-2">Tipos disponibles:</div>
+        <div class="d-flex flex-wrap gap-2">
+          {% for key, desc in scan_type_help.items %}
+            <span class="badge text-bg-light border">{{ key }} · {{ desc }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="col-12">
+        <label class="form-label">{{ form.options.label }}</label>
+        {{ form.options }}
+        <div class="form-text">Opciones adicionales auditables en metadata del scan.</div>
+        {{ form.options.errors }}
+      </div>
+      <div class="col-12 d-flex justify-content-end gap-2">
+        <a href="{% url 'scans-list' %}" class="btn btn-outline-secondary">Cancel</a>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-rocket-takeoff me-1"></i>Run Scan</button>
+      </div>
+    </form>
   </div>
 </div>
 {% endblock %}

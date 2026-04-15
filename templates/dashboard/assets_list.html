@@ -1,1 +1,46 @@
-{% extends "base.html" %}{% block content %}<div class="card metric-card"><div class="card-body"><h4>Assets</h4><table class='table table-hover'><thead><tr><th>Nombre</th><th>Tipo</th><th>Valor</th><th>Criticidad</th></tr></thead><tbody>{% for obj in object_list %}<tr><td><a href='/assets/{{ obj.id }}/'>{{ obj.name }}</a></td><td>{{ obj.asset_type }}</td><td>{{ obj.value }}</td><td>{{ obj.criticality }}</td></tr>{% empty %}<tr><td colspan="4" class="text-muted">No hay activos cargados.</td></tr>{% endfor %}</tbody></table></div></div>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="mb-1">Assets</h2>
+    <p class="text-muted mb-0">Gestiona el inventario de superficie expuesta de tu organización.</p>
+  </div>
+  <a href="{% url 'assets-create' %}" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>New Asset</a>
+</div>
+
+<div class="card metric-card">
+  <div class="card-body">
+    {% if object_list %}
+    <div class="table-responsive">
+      <table class='table table-enterprise align-middle'>
+        <thead>
+          <tr><th>Name</th><th>Type</th><th>Value</th><th>Criticality</th><th>Status</th><th class="text-end">Actions</th></tr>
+        </thead>
+        <tbody>
+        {% for obj in object_list %}
+          <tr>
+            <td><a href='{% url 'assets-detail' obj.id %}' class="fw-semibold text-decoration-none">{{ obj.name }}</a></td>
+            <td><span class="badge text-bg-light border">{{ obj.get_asset_type_display }}</span></td>
+            <td><code>{{ obj.value }}</code></td>
+            <td><span class="badge severity-badge severity-{{ obj.criticality }}">{{ obj.get_criticality_display }}</span></td>
+            <td>{{ obj.get_status_display }}</td>
+            <td class="text-end">
+              <a href="{% url 'scans-create' %}?asset={{ obj.id }}" class="btn btn-sm btn-primary">Run Scan</a>
+              <a href="{% url 'assets-edit' obj.id %}" class="btn btn-sm btn-outline-secondary">Edit</a>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="text-center py-5">
+        <i class="bi bi-hdd-network fs-1 text-secondary"></i>
+        <h5 class="mt-3">No assets yet</h5>
+        <p class="text-muted">Crea tu primer activo para comenzar a escanear IPs, dominios, URLs y rangos CIDR.</p>
+        <a href="{% url 'assets-create' %}" class="btn btn-primary">Create your first asset</a>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
