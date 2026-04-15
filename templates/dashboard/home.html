@@ -1,72 +1,117 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-header d-flex justify-content-between align-items-center mb-4">
+<div class="page-header d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
   <div>
-    <h2 class="mb-1">Dashboard</h2>
-    <p class="text-muted mb-0">Vista ejecutiva de exposición, cobertura y actividad.</p>
+    <h2 class="mb-1">Dashboard Ejecutivo</h2>
+    <p class="text-muted mb-0">Postura de exposición, telemetría operativa y hallazgos priorizados.</p>
   </div>
   <div class="d-flex gap-2">
-    <a href="{% url 'assets-create' %}" class="btn btn-outline-secondary">New Asset</a>
-    <a href="{% url 'scans-create' %}" class="btn btn-primary">New Scan</a>
+    <a href="{% url 'assets-create' %}" class="btn btn-outline-secondary">Nuevo asset</a>
+    <a href="{% url 'scans-create' %}" class="btn btn-primary">Lanzar scan</a>
   </div>
 </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Activos totales' value=assets_total %}</div>
-  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Escaneos recientes' value=recent_scans|length %}</div>
-  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Servicios detectados' value=top_services|length %}</div>
-  <div class="col-md-3">{% include 'includes/metrics_card.html' with title='Reglas KB' value=kb_rules_total %}</div>
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Activos inventariados' value=assets_total icon='bi-hdd-rack' helper='Cobertura total del tenant' %}</div>
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Scans recientes' value=recent_scans|length icon='bi-radar' helper='Últimos ciclos de análisis' %}</div>
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Servicios expuestos' value=top_services|length icon='bi-diagram-3' helper='Superficie detectada' %}</div>
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Reglas de correlación' value=kb_rules_total icon='bi-journal-code' helper='Base de conocimiento activa' %}</div>
 </div>
 
 <div class="row g-3 mb-3">
-  <div class="col-lg-6">
-    <div class="card metric-card h-100"><div class="card-body"><h6>Hallazgos por severidad</h6>
-      <ul class="mb-0">
+  <div class="col-xl-7">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      {% include 'includes/section_header.html' with eyebrow='Risk distribution' title='Hallazgos por severidad' action_url='/findings/' action_label='Ver findings' %}
+      <div class="row g-2">
         {% for item in findings_by_severity %}
-          <li class="d-flex justify-content-between mb-1"><span>{% include 'includes/severity_badge.html' with severity=item.severity %}</span><span>{{ item.total }}</span></li>
+        <div class="col-md-6 col-xxl-4">
+          <a class="severity-card severity-{{ item.severity }}" href="/findings/">
+            <div class="d-flex justify-content-between align-items-start">
+              {% include 'includes/severity_badge.html' with severity=item.severity %}
+              <i class="bi bi-arrow-right-short text-muted"></i>
+            </div>
+            <div class="severity-total mt-3">{{ item.total }}</div>
+            <div class="severity-percentage">{{ item.percentage }}% del total ({{ findings_total }})</div>
+          </a>
+        </div>
         {% empty %}
-          <li class="text-muted">No hay findings aún. Ejecuta un scan para comenzar.</li>
+          <div class="col-12">{% include 'includes/empty_state.html' with icon='bi-shield-slash' title='No findings yet' description='Cuando ejecutes tu primer scan, aparecerá la distribución por severidad.' cta_url='/scans/new/' cta_label='Ejecutar scan' %}</div>
         {% endfor %}
-      </ul>
-    </div></div>
+      </div>
+    </div>
   </div>
-  <div class="col-lg-6">
-    <div class="card metric-card h-100"><div class="card-body"><h6>Actividad reciente</h6>
-      <ul class="mb-0">
-        {% for finding in recent_activity %}
-          <li>{{ finding.title }} · {% include 'includes/severity_badge.html' with severity=finding.severity %}</li>
-        {% empty %}
-          <li class="text-muted">Sin actividad reciente registrada.</li>
-        {% endfor %}
-      </ul>
-    </div></div>
-  </div>
-</div>
 
-<div class="card metric-card">
-  <div class="card-body">
-    <h6>Últimos escaneos</h6>
-    <div class="table-responsive">
-      <table class="table table-enterprise align-middle mb-0">
-        <thead><tr><th>ID</th><th>Activo</th><th>Tipo</th><th>Estado</th><th>Fecha</th></tr></thead>
-        <tbody>
-          {% for scan in recent_scans %}
-            <tr>
-              <td><a href="{% url 'scans-detail' scan.id %}">#{{ scan.id }}</a></td>
-              <td>{{ scan.asset.name }}</td>
-              <td>{{ scan.engine_metadata.requested_scan_type|default:scan.profile.name }}</td>
-              <td><span class="badge status-badge status-{{ scan.status }}">{{ scan.get_status_display }}</span></td>
-              <td>{{ scan.created_at|date:'Y-m-d H:i' }}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="5" class="text-muted">Sin escaneos recientes. <a href="{% url 'scans-create' %}">Run your first scan</a>.</td></tr>
+  <div class="col-xl-5">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      {% include 'includes/section_header.html' with eyebrow='Security feed' title='Actividad reciente' %}
+      {% if recent_activity %}
+        <div class="activity-feed">
+          {% for item in recent_activity %}
+            {% include 'includes/activity_item.html' with item=item %}
           {% endfor %}
-        </tbody>
-      </table>
+        </div>
+      {% else %}
+        {% include 'includes/empty_state.html' with icon='bi-clock-history' title='No recent activity' description='Aún no hay eventos recientes para mostrar en el feed.' %}
+      {% endif %}
     </div>
   </div>
 </div>
+
+<div class="row g-3">
+  <div class="col-xl-7">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      {% include 'includes/section_header.html' with eyebrow='Latest findings' title='Hallazgos recientes' action_url='/findings/' action_label='Abrir backlog' %}
+      {% if latest_findings %}
+      <div class="table-responsive">
+        <table class="table table-enterprise align-middle mb-0">
+          <thead>
+            <tr><th>Título</th><th>Severidad</th><th>Activo</th><th>Estado</th><th>Fecha</th></tr>
+          </thead>
+          <tbody>
+          {% for finding in latest_findings %}
+            <tr class="finding-row severity-{{ finding.severity }}">
+              <td>
+                <a class="fw-semibold text-decoration-none" href="{% url 'findings-detail' finding.id %}">{{ finding.title }}</a>
+                <div class="small text-muted">{{ finding.service_finding.service|default:'N/A' }}{% if finding.service_finding.port %}:{{ finding.service_finding.port }}{% endif %}</div>
+              </td>
+              <td>{% include 'includes/severity_badge.html' with severity=finding.severity %}</td>
+              <td>{{ finding.asset.name|default:'No asociado' }}</td>
+              <td>{% include 'includes/status_badge.html' with status=finding.status label=finding.get_status_display %}</td>
+              <td>{{ finding.created_at|date:'Y-m-d H:i' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        {% include 'includes/empty_state.html' with icon='bi-search' title='No findings yet' description='El backlog está vacío. Ejecuta scans para poblar esta sección.' cta_url='/scans/new/' cta_label='Crear scan' %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="surface-card p-3 p-xl-4 h-100">
+      {% include 'includes/section_header.html' with eyebrow='Attack surface' title='Top servicios expuestos' action_url='/scans/' action_label='Ver scans' %}
+      {% if top_services %}
+      <div class="d-flex flex-column gap-2">
+        {% for item in top_services %}
+        <div class="d-flex justify-content-between align-items-center border rounded-3 px-3 py-2">
+          <div>
+            <div class="fw-semibold">{{ item.service }}</div>
+            <div class="small text-muted">Superficie observada en los últimos scans</div>
+          </div>
+          <span class="badge text-bg-light border">{{ item.total }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+        {% include 'includes/empty_state.html' with icon='bi-broadcast' title='No scans yet' description='Aún no hay telemetría de puertos/servicios. Ejecuta un scan inicial.' cta_url='/scans/new/' cta_label='Lanzar scan' %}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
 {% if kb_rules_total == 0 %}
-<div class="alert alert-warning mt-3 mb-0">La correlación avanzada no está disponible temporalmente.</div>
+<div class="alert alert-warning mt-3 mb-0">La correlación avanzada no está disponible temporalmente porque no hay reglas de KB cargadas.</div>
 {% endif %}
 {% endblock %}

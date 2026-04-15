@@ -1,1 +1,83 @@
-{% extends "base.html" %}{% block content %}<div class="card metric-card"><div class="card-body"><h3>{{ object.title }}</h3><p><b>Severidad:</b> {% include 'includes/severity_badge.html' with severity=object.severity %}</p><p><b>Confianza:</b> {{ object.confidence }}</p><p>{{ object.description }}</p><h5>Remediación</h5><p>{{ object.remediation|default:'-' }}</p></div></div>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header mb-4 d-flex flex-wrap justify-content-between align-items-start gap-3">
+  <div>
+    <h2 class="mb-1">{{ object.title }}</h2>
+    <p class="text-muted mb-0">Detalle ejecutivo del hallazgo con contexto técnico y plan de remediación.</p>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    {% include 'includes/severity_badge.html' with severity=object.severity %}
+    {% include 'includes/status_badge.html' with status=object.status label=object.get_status_display %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-8">
+    <div class="surface-card p-3 p-xl-4 mb-3">
+      {% include 'includes/section_header.html' with eyebrow='Summary' title='Resumen del finding' %}
+      <p class="mb-0">{{ object.description|default:'Sin descripción disponible.' }}</p>
+    </div>
+
+    <div class="surface-card p-3 p-xl-4 mb-3">
+      {% include 'includes/section_header.html' with eyebrow='Evidence' title='Evidencia principal' %}
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="small text-muted">Tipo de evidencia</div>
+          <div class="fw-semibold">{{ object.raw_evidence.source|default:'No especificado' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="small text-muted">Servicio / Puerto</div>
+          <div class="fw-semibold">{{ object.service_finding.service|default:'N/A' }}{% if object.service_finding.port %}:{{ object.service_finding.port }}{% endif %}</div>
+        </div>
+        <div class="col-12">
+          <div class="small text-muted">Evidencia</div>
+          <code class="d-block bg-light border rounded p-2 text-wrap">{{ object.raw_evidence.raw_output|default:'Sin evidencia textual disponible.'|truncatechars:700 }}</code>
+        </div>
+      </div>
+    </div>
+
+    <div class="surface-card p-3 p-xl-4 mb-3">
+      {% include 'includes/section_header.html' with eyebrow='Remediation' title='Remediación sugerida' %}
+      <p class="mb-0">{{ object.remediation|default:'No se ha definido un plan de remediación para este hallazgo.' }}</p>
+    </div>
+
+    <div class="surface-card p-3 p-xl-4">
+      {% include 'includes/section_header.html' with eyebrow='References' title='Referencias' %}
+      {% if object.reference %}
+      <a href="{{ object.reference }}" target="_blank" rel="noopener noreferrer">{{ object.reference }}</a>
+      {% else %}
+      <p class="text-muted mb-0">No hay referencias externas asociadas.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-xl-4">
+    <div class="surface-card p-3 p-xl-4 mb-3">
+      {% include 'includes/section_header.html' with eyebrow='Context' title='Asset afectado' %}
+      <div class="fw-semibold">{{ object.asset.name|default:'No asociado' }}</div>
+      <div class="text-muted small">{{ object.asset.value|default:'-' }}</div>
+      {% if object.asset %}
+      <a class="btn btn-sm btn-outline-secondary mt-3" href="{% url 'assets-detail' object.asset.id %}">Ver asset</a>
+      {% endif %}
+    </div>
+
+    <div class="surface-card p-3 p-xl-4 mb-3">
+      {% include 'includes/section_header.html' with eyebrow='Risk' title='Severidad & Confidence' %}
+      <div class="d-flex align-items-center gap-2 mb-2">
+        {% include 'includes/severity_badge.html' with severity=object.severity %}
+        <span class="badge text-bg-light border text-uppercase">{{ object.confidence }}</span>
+      </div>
+      <div class="small text-muted">Estado actual: {{ object.get_status_display }}</div>
+    </div>
+
+    <div class="surface-card p-3 p-xl-4">
+      {% include 'includes/section_header.html' with eyebrow='Analyst' title='Notas' %}
+      {% if object.analyst_notes %}
+      <p class="mb-0">{{ object.analyst_notes }}</p>
+      {% else %}
+      <p class="text-muted mb-0">Sin notas del analista por ahora.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

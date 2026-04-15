@@ -1,0 +1,18 @@
+<div class="activity-item">
+  <div class="activity-icon">
+    {% if item.kind == 'scan_completed' %}<i class="bi bi-check2-circle"></i>{% endif %}
+    {% if item.kind == 'scan_failed' %}<i class="bi bi-x-circle"></i>{% endif %}
+    {% if item.kind == 'scan_running' or item.kind == 'scan_queued' or item.kind == 'scan_pending' %}<i class="bi bi-arrow-repeat"></i>{% endif %}
+    {% if item.kind == 'finding_created' %}<i class="bi bi-shield-exclamation"></i>{% endif %}
+    {% if item.kind == 'asset_created' %}<i class="bi bi-hdd-network"></i>{% endif %}
+    {% if item.kind == 'rule_matched' %}<i class="bi bi-diagram-3"></i>{% endif %}
+    {% if item.kind == 'scan_cancelled' %}<i class="bi bi-slash-circle"></i>{% endif %}
+  </div>
+  <div>
+    <div class="d-flex justify-content-between align-items-start gap-2">
+      <p class="activity-title">{{ item.title }}</p>
+      <span class="activity-time">{{ item.timestamp|date:'Y-m-d H:i' }}</span>
+    </div>
+    <p class="activity-description">{{ item.description }}</p>
+  </div>
+</div>
