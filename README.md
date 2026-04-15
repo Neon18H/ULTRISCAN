@@ -32,9 +32,10 @@ pip install -r requirements.txt
 cp .env.example .env
 python manage.py migrate
 python manage.py createsuperuser
-python manage.py seed_initial_data
 python manage.py runserver
 ```
+
+> Nota: en despliegue, la base de conocimiento inicial se carga automáticamente. El cliente final no debe ejecutar comandos manuales para habilitar correlación.
 
 ## Verificación de migraciones antes de deploy
 Antes de merge/deploy, ejecuta:
@@ -91,10 +92,11 @@ Variables requeridas:
 
 En cada deploy, el contenedor ejecuta automáticamente y en orden:
 1. `python manage.py migrate --noinput`
-2. `python manage.py collectstatic --noinput`
-3. `gunicorn vulnsight.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 3 --timeout 120`
+2. `python manage.py seed_initial_data`
+3. `python manage.py collectstatic --noinput`
+4. `gunicorn vulnsight.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 3 --timeout 120`
 
-Esto evita que la aplicación arranque con tablas faltantes.
+`seed_initial_data` es idempotente: puede ejecutarse en cada deploy sin duplicar registros. La plataforma administra centralmente la Knowledge Base y reutiliza esas reglas para todas las organizaciones.
 
 ## Troubleshooting
 
@@ -135,5 +137,4 @@ ALLOWED_HOSTS=vulnsight.up.railway.app,localhost,127.0.0.1
 railway logs
 railway shell
 python manage.py showmigrations
-python manage.py seed_initial_data
 ```

@@ -1,5 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.mixins import UserPassesTestMixin
 from django.db import OperationalError, ProgrammingError
 from django.db.models import Count
 from django.shortcuts import redirect
@@ -103,9 +104,12 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
     template_name = 'dashboard/finding_detail.html'
 
 
-class KnowledgeBaseListView(LoginRequiredMixin, ListView):
+class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
     model = VulnerabilityRule
     template_name = 'dashboard/knowledge_base_list.html'
+
+    def test_func(self):
+        return self.request.user.is_staff
 
 
 class ScanProfileListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):
