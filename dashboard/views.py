@@ -1,3 +1,4 @@
+from django.db import OperationalError, ProgrammingError
 from django.db.models import Count
 from django.views.generic import DetailView, ListView, TemplateView
 
@@ -7,14 +8,21 @@ from knowledge_base.models import VulnerabilityRule
 from scans.models import ScanExecution
 
 
+def safe_query(default, query_fn):
+    try:
+        return query_fn()
+    except (ProgrammingError, OperationalError):
+        return default
+
+
 class DashboardHomeView(TemplateView):
     template_name = 'dashboard/home.html'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['assets_total'] = Asset.objects.count()
-        context['recent_scans'] = ScanExecution.objects.order_by('-created_at')[:5]
-        context['findings_by_severity'] = Finding.objects.values('severity').annotate(total=Count('id'))
+        context['assets_total'] = safe_query(0, lambda: Asset.objects.count())
+        context['recent_scans'] = safe_query([], lambda: list(ScanExecution.objects.order_by('-created_at')[:5]))
+        context['findings_by_severity'] = safe_query([], lambda: list(Finding.objects.values('severity').annotate(total=Count('id'))))
         return context
 
 
