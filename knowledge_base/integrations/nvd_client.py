@@ -81,7 +81,7 @@ class NVDClient:
                 'startIndex': current_start_index,
                 'resultsPerPage': results_per_page,
             }
-            allowed_filters = {'cveId', 'cpeName', 'hasKev', 'lastModStartDate', 'lastModEndDate'}
+            allowed_filters = {'cveId', 'cpeName', 'hasKev', 'lastModStartDate', 'lastModEndDate', 'pubStartDate', 'pubEndDate'}
             for key, value in filters.items():
                 if value is None or value == '' or key not in allowed_filters:
                     continue
