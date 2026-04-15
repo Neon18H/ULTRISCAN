@@ -477,34 +477,258 @@ def _upsert_related(
     _sync_metrics(advisory=advisory, metrics=metrics)
 
 
+def _normalize_job_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
+    return {k: v for k, v in (filters or {}).items() if v not in (None, '')}
+
+
+def create_sync_job(
+    command: str,
+    job_type: str,
+    filters: dict[str, Any] | None = None,
+    page_size: int = 0,
+    start_index: int = 0,
+    resume: bool = False,
+) -> AdvisorySyncJob:
+    clean_filters = _normalize_job_filters(filters)
+    if resume:
+        previous = (
+            AdvisorySyncJob.objects.filter(
+                source=ExternalAdvisory.Source.NVD,
+                command=command,
+                job_type=job_type,
+                status__in=[AdvisorySyncJob.Status.PENDING, AdvisorySyncJob.Status.RUNNING, AdvisorySyncJob.Status.FAILED],
+            )
+            .order_by('-created_at')
+            .first()
+        )
+        if previous:
+            previous.filters = clean_filters
+            previous.filters_json = clean_filters
+            previous.page_size = page_size or previous.page_size
+            previous.status = AdvisorySyncJob.Status.PENDING
+            previous.error_message = ''
+            previous.last_error = ''
+            previous.save(
+                update_fields=['filters', 'filters_json', 'page_size', 'status', 'error_message', 'last_error', 'updated_at']
+            )
+            return previous
+
+    return AdvisorySyncJob.objects.create(
+        command=command,
+        job_type=job_type,
+        filters=clean_filters,
+        filters_json=clean_filters,
+        status=AdvisorySyncJob.Status.PENDING,
+        last_start_index=start_index,
+        page_size=page_size,
+    )
+
+
+def run_sync_job(
+    *,
+    job: AdvisorySyncJob,
+    client,
+    filters: dict[str, Any] | None = None,
+    page_size: int = 0,
+    limit: int | None = None,
+) -> AdvisorySyncJob:
+    clean_filters = _normalize_job_filters(filters or job.filters_json)
+    requested_page_size = int(page_size or job.page_size or 0)
+    limit = int(limit) if limit else None
+
+    if job.status == AdvisorySyncJob.Status.COMPLETED:
+        return job
+
+    if not job.started_at:
+        job.started_at = timezone.now()
+    job.status = AdvisorySyncJob.Status.RUNNING
+    job.page_size = requested_page_size
+    job.filters = clean_filters
+    job.filters_json = clean_filters
+    job.save(update_fields=['started_at', 'status', 'page_size', 'filters', 'filters_json', 'updated_at'])
+
+    created_count = job.created_count
+    updated_count = job.updated_count
+    ignored_count = job.ignored_count
+    fetched_count = job.total_fetched
+    errors_count = job.error_count
+    error_messages: list[str] = [job.last_error] if job.last_error else []
+
+    current_start_index = int(job.last_start_index or 0)
+    processed_this_run = 0
+
+    try:
+        for page in client.iter_cve_pages(
+            results_per_page=requested_page_size or None,
+            start_index=current_start_index,
+            **clean_filters,
+        ):
+            page_items = page['vulnerabilities']
+            for entry in page_items:
+                cve = entry.get('cve') or {}
+                cve_id = cve.get('id')
+                if not cve_id:
+                    ignored_count += 1
+                    logger.warning('Skipping NVD entry without CVE id. entry_keys=%s', list(entry.keys()))
+                    continue
+
+                if limit is not None and processed_this_run >= limit:
+                    break
+
+                fetched_count += 1
+                processed_this_run += 1
+                try:
+                    cvss_data = _extract_cvss(cve)
+                    references, refs_original_count = _extract_references(cve)
+                    metrics = _extract_metrics(cve)
+                    metadata = {
+                        'source_identifier': cve.get('sourceIdentifier') or '',
+                        'vuln_status': cve.get('vulnStatus') or '',
+                        'cisa_exploit_add': cve.get('cisaExploitAdd') or '',
+                        'cisa_action_due': cve.get('cisaActionDue') or '',
+                        'cisa_required_action': cve.get('cisaRequiredAction') or '',
+                    }
+
+                    defaults = {
+                        'source': ExternalAdvisory.Source.NVD,
+                        'title': '',
+                        'description': _pick_description(cve),
+                        'published_at': _parse_nvd_datetime(cve.get('published')),
+                        'last_modified_at': _parse_nvd_datetime(cve.get('lastModified')),
+                        'severity': cvss_data['severity'],
+                        'cvss_score': cvss_data['cvss_score'],
+                        'cvss_vector': cvss_data['cvss_vector'],
+                        'cvss_version': cvss_data['cvss_version'],
+                        'has_kev': bool(cve.get('cisaExploitAdd')),
+                        'metadata': metadata,
+                        'raw_payload': entry,
+                    }
+
+                    with transaction.atomic():
+                        advisory, created = ExternalAdvisory.objects.update_or_create(cve_id=cve_id, defaults=defaults)
+                        _upsert_related(
+                            advisory=advisory,
+                            refs=references,
+                            refs_original_count=refs_original_count,
+                            weaknesses=_extract_weaknesses(cve),
+                            cpe_matches=_extract_cpe_matches(cve),
+                            metrics=metrics,
+                        )
+
+                    if created:
+                        created_count += 1
+                    else:
+                        updated_count += 1
+                except Exception as exc:
+                    errors_count += 1
+                    error_detail = f'{cve_id}: {exc}'
+                    error_messages.append(error_detail)
+                    logger.exception('Failed to sync NVD advisory cve_id=%s', cve_id)
+
+            current_start_index = page['start_index'] + len(page_items)
+            job.last_start_index = current_start_index
+            job.total_fetched = fetched_count
+            job.total_created = created_count
+            job.total_updated = updated_count
+            job.total_errors = errors_count
+            job.created_count = created_count
+            job.updated_count = updated_count
+            job.ignored_count = ignored_count
+            job.error_count = errors_count
+            job.last_error = '; '.join(error_messages[-3:])
+            job.save(
+                update_fields=[
+                    'last_start_index',
+                    'total_fetched',
+                    'total_created',
+                    'total_updated',
+                    'total_errors',
+                    'created_count',
+                    'updated_count',
+                    'ignored_count',
+                    'error_count',
+                    'last_error',
+                    'updated_at',
+                ]
+            )
+
+            if limit is not None and processed_this_run >= limit:
+                break
+
+        job.status = AdvisorySyncJob.Status.COMPLETED
+        job.finished_at = timezone.now()
+        job.last_successful_sync_at = job.finished_at
+        job.error_message = '; '.join(error_messages[:10])
+    except Exception as exc:  # pragma: no cover
+        job.status = AdvisorySyncJob.Status.FAILED
+        job.finished_at = timezone.now()
+        job.error_message = str(exc)
+        job.last_error = str(exc)
+        job.total_errors = max(job.total_errors, 1)
+        job.error_count = job.total_errors
+        logger.exception('NVD sync job failed job_id=%s', job.id)
+        raise
+    finally:
+        job.total_fetched = fetched_count
+        job.total_created = created_count
+        job.total_updated = updated_count
+        job.total_errors = errors_count
+        job.created_count = created_count
+        job.updated_count = updated_count
+        job.ignored_count = ignored_count
+        job.error_count = errors_count
+        job.save(
+            update_fields=[
+                'status',
+                'finished_at',
+                'last_successful_sync_at',
+                'error_message',
+                'last_error',
+                'total_fetched',
+                'total_created',
+                'total_updated',
+                'total_errors',
+                'created_count',
+                'updated_count',
+                'ignored_count',
+                'error_count',
+                'updated_at',
+            ]
+        )
+
+    return job
+
+
 def sync_nvd_vulnerabilities(command: str, vulnerabilities: Iterable[dict[str, Any]], filters: dict[str, Any] | None = None) -> AdvisorySyncJob:
-    job = AdvisorySyncJob.objects.create(command=command, filters=filters or {})
+    job = AdvisorySyncJob.objects.create(
+        command=command,
+        job_type=command,
+        filters=_normalize_job_filters(filters),
+        filters_json=_normalize_job_filters(filters),
+        status=AdvisorySyncJob.Status.RUNNING,
+        started_at=timezone.now(),
+    )
+
     created_count = 0
     updated_count = 0
     fetched_count = 0
+    ignored_count = 0
     errors_count = 0
     error_messages: list[str] = []
 
     try:
         for entry in vulnerabilities:
-            fetched_count += 1
             cve = entry.get('cve') or {}
             cve_id = cve.get('id')
             if not cve_id:
-                logger.warning('Skipping NVD entry without CVE id. entry_keys=%s', list(entry.keys()))
+                ignored_count += 1
                 continue
 
+            fetched_count += 1
             try:
                 cvss_data = _extract_cvss(cve)
                 references, refs_original_count = _extract_references(cve)
                 metrics = _extract_metrics(cve)
-                metadata = {
-                    'source_identifier': cve.get('sourceIdentifier') or '',
-                    'vuln_status': cve.get('vulnStatus') or '',
-                    'cisa_exploit_add': cve.get('cisaExploitAdd') or '',
-                    'cisa_action_due': cve.get('cisaActionDue') or '',
-                    'cisa_required_action': cve.get('cisaRequiredAction') or '',
-                }
 
                 defaults = {
                     'source': ExternalAdvisory.Source.NVD,
@@ -517,7 +741,13 @@ def sync_nvd_vulnerabilities(command: str, vulnerabilities: Iterable[dict[str, A
                     'cvss_vector': cvss_data['cvss_vector'],
                     'cvss_version': cvss_data['cvss_version'],
                     'has_kev': bool(cve.get('cisaExploitAdd')),
-                    'metadata': metadata,
+                    'metadata': {
+                        'source_identifier': cve.get('sourceIdentifier') or '',
+                        'vuln_status': cve.get('vulnStatus') or '',
+                        'cisa_exploit_add': cve.get('cisaExploitAdd') or '',
+                        'cisa_action_due': cve.get('cisaActionDue') or '',
+                        'cisa_required_action': cve.get('cisaRequiredAction') or '',
+                    },
                     'raw_payload': entry,
                 }
 
@@ -534,42 +764,33 @@ def sync_nvd_vulnerabilities(command: str, vulnerabilities: Iterable[dict[str, A
 
                 if created:
                     created_count += 1
-                    logger.info('NVD advisory created cve_id=%s', cve_id)
                 else:
                     updated_count += 1
-                    logger.info('NVD advisory updated cve_id=%s', cve_id)
             except Exception as exc:
                 errors_count += 1
-                error_detail = f'{cve_id}: {exc}'
-                error_messages.append(error_detail)
+                error_messages.append(f'{cve_id}: {exc}')
                 logger.exception('Failed to sync NVD advisory cve_id=%s', cve_id)
-                continue
 
-        job.status = AdvisorySyncJob.Status.SUCCEEDED
-        if errors_count:
-            job.total_errors = errors_count
-            job.error_message = '; '.join(error_messages[:10])
+        job.status = AdvisorySyncJob.Status.COMPLETED
+        job.last_successful_sync_at = timezone.now()
     except Exception as exc:  # pragma: no cover
         job.status = AdvisorySyncJob.Status.FAILED
         job.error_message = str(exc)
-        job.total_errors = 1
+        job.last_error = str(exc)
         raise
     finally:
         job.finished_at = timezone.now()
         job.total_fetched = fetched_count
         job.total_created = created_count
         job.total_updated = updated_count
-        job.save(
-            update_fields=[
-                'status',
-                'error_message',
-                'total_errors',
-                'finished_at',
-                'total_fetched',
-                'total_created',
-                'total_updated',
-                'updated_at',
-            ]
-        )
+        job.total_errors = errors_count
+        job.created_count = created_count
+        job.updated_count = updated_count
+        job.ignored_count = ignored_count
+        job.error_count = errors_count
+        if error_messages:
+            job.error_message = '; '.join(error_messages[:10])
+            job.last_error = error_messages[-1]
+        job.save()
 
     return job

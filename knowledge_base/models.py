@@ -189,24 +189,39 @@ class ExternalAdvisoryCpeMatch(TimeStampedModel):
 
 class AdvisorySyncJob(TimeStampedModel):
     class Status(models.TextChoices):
-        STARTED = 'started', 'Started'
-        SUCCEEDED = 'succeeded', 'Succeeded'
+        PENDING = 'pending', 'Pending'
+        RUNNING = 'running', 'Running'
+        COMPLETED = 'completed', 'Completed'
         FAILED = 'failed', 'Failed'
 
     source = models.CharField(max_length=20, default=ExternalAdvisory.Source.NVD)
     command = models.CharField(max_length=120)
+    job_type = models.CharField(max_length=120, default='sync_nvd')
     filters = models.JSONField(default=dict, blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.STARTED)
-    started_at = models.DateTimeField(auto_now_add=True)
+    filters_json = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+    last_successful_sync_at = models.DateTimeField(null=True, blank=True)
+    last_start_index = models.PositiveIntegerField(default=0)
+    page_size = models.PositiveIntegerField(default=0)
     total_fetched = models.PositiveIntegerField(default=0)
     total_created = models.PositiveIntegerField(default=0)
     total_updated = models.PositiveIntegerField(default=0)
     total_errors = models.PositiveIntegerField(default=0)
+    created_count = models.PositiveIntegerField(default=0)
+    updated_count = models.PositiveIntegerField(default=0)
+    ignored_count = models.PositiveIntegerField(default=0)
+    error_count = models.PositiveIntegerField(default=0)
     error_message = models.TextField(blank=True)
+    last_error = models.TextField(blank=True)
+
+    # Backward-compatible aliases used in older code/tests.
+    STARTED = Status.RUNNING
+    SUCCEEDED = Status.COMPLETED
 
     class Meta:
-        ordering = ['-started_at']
+        ordering = ['-created_at']
 
     def __str__(self):
         return f'{self.source}:{self.command}:{self.status}'
