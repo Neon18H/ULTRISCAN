@@ -1,9 +1,26 @@
 {% extends 'auth_base.html' %}
 {% block content %}
-<h3 class="mb-1">Iniciar sesión</h3><p class="text-muted">Accede a tu organización.</p>
-<form method="post">{% csrf_token %}
-  {% for field in form %}<div class="mb-3"><label class="form-label">{{ field.label }}</label>{{ field }}{% if field.errors %}<div class="text-danger small">{{ field.errors|striptags }}</div>{% endif %}</div>{% endfor %}
-  <button class="btn btn-primary w-100">Entrar</button>
+<h1 class="auth-title">Iniciar sesión</h1>
+<p class="auth-subtitle">Accede a UltriScan para gestionar el riesgo de tu organización.</p>
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger py-2">{{ form.non_field_errors|striptags }}</div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+  {% include 'includes/auth_field.html' with field=form.username %}
+  {% include 'includes/auth_field.html' with field=form.password %}
+
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <label class="auth-inline-check" for="{{ form.remember_me.id_for_label }}">{{ form.remember_me }} {{ form.remember_me.label }}</label>
+    <a href="#" class="text-decoration-none">¿Olvidaste tu contraseña?</a>
+  </div>
+
+  <button class="btn btn-primary w-100 auth-cta" type="submit">Entrar al workspace</button>
 </form>
-<div class="text-center mt-3"><a href="/accounts/register/">Crear cuenta</a></div>
+
+<div class="auth-footer">
+  ¿Aún no tienes cuenta? <a href="{% url 'register' %}" class="fw-semibold text-decoration-none">Crear organización</a>
+</div>
 {% endblock %}

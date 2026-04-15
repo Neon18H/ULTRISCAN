@@ -3,9 +3,85 @@
 <div class="page-header mb-4 d-flex flex-wrap justify-content-between align-items-center gap-3">
   <div>
     <h2 class="mb-1">Findings</h2>
-    <p class="text-muted mb-0">Backlog de hallazgos correlacionados con evidencia técnica verificable.</p>
+    <p class="text-muted mb-0">Backlog correlacionado con evidencia verificable y filtros de análisis avanzados.</p>
   </div>
-  <a href="{% url 'scans-create' %}" class="btn btn-primary btn-sm">Nuevo scan</a>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{% url 'reports-executive-pdf' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-earmark-bar-graph me-1"></i>Executive PDF</a>
+    <a href="{% url 'findings-export-technical-pdf' %}{% if current_querystring %}?{{ current_querystring }}{% endif %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-file-earmark-medical me-1"></i>Technical PDF</a>
+    <a href="{% url 'scans-create' %}" class="btn btn-primary btn-sm">Nuevo scan</a>
+  </div>
+</div>
+
+<div class="surface-card p-3 p-xl-4 mb-3">
+  <form method="get" class="row g-2 g-xl-3 align-items-end">
+    <div class="col-12 col-xl-3">
+      <label class="form-label small text-muted text-uppercase">Búsqueda</label>
+      <input type="text" class="form-control" name="query" placeholder="Título o evidencia" value="{{ request.GET.query }}">
+    </div>
+    <div class="col-6 col-xl-2">
+      <label class="form-label small text-muted text-uppercase">Severidad</label>
+      <select class="form-select" name="severity">
+        <option value="">Todas</option>
+        {% for value, label in severity_choices %}
+          <option value="{{ value }}" {% if request.GET.severity == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-xl-2">
+      <label class="form-label small text-muted text-uppercase">Estado</label>
+      <select class="form-select" name="status">
+        <option value="">Todos</option>
+        {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-xl-2">
+      <label class="form-label small text-muted text-uppercase">Confidence</label>
+      <select class="form-select" name="confidence">
+        <option value="">Todas</option>
+        {% for value, label in confidence_choices %}
+          <option value="{{ value }}" {% if request.GET.confidence == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-xl-3">
+      <label class="form-label small text-muted text-uppercase">Activo</label>
+      <input type="text" class="form-control" name="asset" placeholder="hostname o IP" value="{{ request.GET.asset }}">
+    </div>
+
+    <div class="col-6 col-xl-2">
+      <label class="form-label small text-muted text-uppercase">Servicio</label>
+      <input type="text" class="form-control" name="service" placeholder="http, ssh..." value="{{ request.GET.service }}">
+    </div>
+    <div class="col-6 col-xl-1">
+      <label class="form-label small text-muted text-uppercase">Puerto</label>
+      <input type="text" class="form-control" name="port" placeholder="443" value="{{ request.GET.port }}">
+    </div>
+    <div class="col-6 col-xl-2">
+      <label class="form-label small text-muted text-uppercase">Fecha desde</label>
+      <input type="date" class="form-control" name="date_from" value="{{ request.GET.date_from }}">
+    </div>
+    <div class="col-6 col-xl-2">
+      <label class="form-label small text-muted text-uppercase">Fecha hasta</label>
+      <input type="date" class="form-control" name="date_to" value="{{ request.GET.date_to }}">
+    </div>
+    <div class="col-12 col-xl-5 d-flex gap-2 justify-content-xl-end">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply filters</button>
+      <a href="{% url 'findings-list' %}" class="btn btn-outline-secondary">Clear filters</a>
+    </div>
+  </form>
+
+  <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+    <span class="small text-muted">{{ result_count }} resultados en {{ organization.name }}</span>
+    {% if active_filter_chips %}
+      <div class="d-flex flex-wrap gap-2">
+        {% for chip in active_filter_chips %}
+          <span class="badge text-bg-light border">{{ chip.label }}: {{ chip.value }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
 </div>
 
 <div class="surface-card p-3 p-xl-4">
@@ -14,15 +90,7 @@
     <table class="table table-enterprise align-middle mb-0">
       <thead>
         <tr>
-          <th>Finding</th>
-          <th>Severidad</th>
-          <th>Activo</th>
-          <th>Estado</th>
-          <th>Confidence</th>
-          <th>Evidencia</th>
-          <th>Servicio/Puerto</th>
-          <th>Fecha</th>
-          <th class="text-end">Acciones</th>
+          <th>Finding</th><th>Severidad</th><th>Activo</th><th>Estado</th><th>Confidence</th><th>Evidencia</th><th>Servicio/Puerto</th><th>Fecha</th><th class="text-end">Acciones</th>
         </tr>
       </thead>
       <tbody>
@@ -33,32 +101,38 @@
           <div class="small text-muted">{{ obj.description|truncatechars:110 }}</div>
         </td>
         <td>{% include 'includes/severity_badge.html' with severity=obj.severity %}</td>
-        <td>
-          <div class="fw-semibold">{{ obj.asset.name|default:'No asociado' }}</div>
-          <div class="small text-muted">{{ obj.asset.value|default:'-' }}</div>
-        </td>
+        <td><div class="fw-semibold">{{ obj.asset.name|default:'No asociado' }}</div><div class="small text-muted">{{ obj.asset.value|default:'-' }}</div></td>
         <td>{% include 'includes/status_badge.html' with status=obj.status label=obj.get_status_display %}</td>
         <td><span class="badge text-bg-light border text-uppercase">{{ obj.confidence }}</span></td>
         <td class="small text-muted">{{ obj.raw_evidence.source|default:'No source' }}</td>
-        <td>
-          {% if obj.service_finding %}
-            <span class="fw-semibold">{{ obj.service_finding.service|default:'n/a' }}</span>
-            <span class="text-muted">:{{ obj.service_finding.port|default:'-' }}</span>
-          {% else %}
-            <span class="text-muted">N/A</span>
-          {% endif %}
-        </td>
+        <td>{% if obj.service_finding %}<span class="fw-semibold">{{ obj.service_finding.service|default:'n/a' }}</span><span class="text-muted">:{{ obj.service_finding.port|default:'-' }}</span>{% else %}<span class="text-muted">N/A</span>{% endif %}</td>
         <td>{{ obj.created_at|date:'Y-m-d H:i' }}</td>
-        <td class="text-end">
-          <a href="{% url 'findings-detail' obj.id %}" class="btn btn-sm btn-outline-secondary">Detalle</a>
-        </td>
+        <td class="text-end"><a href="{% url 'findings-detail' obj.id %}" class="btn btn-sm btn-outline-secondary">Detalle</a></td>
       </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+
+  {% if is_paginated %}
+  <nav class="mt-3" aria-label="Paginación findings">
+    <ul class="pagination pagination-sm mb-0 justify-content-end">
+      {% if page_obj.has_previous %}
+        <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if current_querystring %}&{{ current_querystring }}{% endif %}">Anterior</a></li>
+      {% else %}
+        <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+      {% endif %}
+      <li class="page-item disabled"><span class="page-link">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span></li>
+      {% if page_obj.has_next %}
+        <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if current_querystring %}&{{ current_querystring }}{% endif %}">Siguiente</a></li>
+      {% else %}
+        <li class="page-item disabled"><span class="page-link">Siguiente</span></li>
+      {% endif %}
+    </ul>
+  </nav>
+  {% endif %}
   {% else %}
-    {% include 'includes/empty_state.html' with icon='bi-search' title='No findings yet' description='Cuando ejecutes scans y se correlacione evidencia, el backlog aparecerá aquí con severidad, confidence y acciones.' cta_url='/scans/new/' cta_label='Ejecutar primer scan' %}
+    {% include 'includes/empty_state.html' with icon='bi-search' title='No findings for current filters' description='Ajusta los filtros o ejecuta nuevos scans para generar hallazgos técnicos.' cta_url='/scans/new/' cta_label='Ejecutar scan' %}
   {% endif %}
 </div>
 {% endblock %}

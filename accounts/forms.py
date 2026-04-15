@@ -1,29 +1,70 @@
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 
 from .models import Organization, OrganizationMembership
 
 User = get_user_model()
 
 
-class EmailAuthenticationForm(AuthenticationForm):
-    username = forms.EmailField(label='Email', widget=forms.EmailInput(attrs={'class': 'form-control', 'placeholder': 'tu@empresa.com'}))
-    password = forms.CharField(label='Contraseña', strip=False, widget=forms.PasswordInput(attrs={'class': 'form-control', 'placeholder': '••••••••'}))
+class EnterpriseAuthFormMixin:
+    field_css_class = 'auth-input'
+
+    def _apply_enterprise_styles(self):
+        for name, field in self.fields.items():
+            classes = field.widget.attrs.get('class', '')
+            field.widget.attrs['class'] = f"{classes} {self.field_css_class}".strip()
+            field.widget.attrs.setdefault('autocomplete', name)
 
 
-class RegistrationForm(forms.Form):
-    first_name = forms.CharField(label='Nombre', max_length=150)
-    last_name = forms.CharField(label='Apellido', max_length=150)
-    email = forms.EmailField(label='Email')
-    password1 = forms.CharField(label='Contraseña', widget=forms.PasswordInput)
-    password2 = forms.CharField(label='Confirmar contraseña', widget=forms.PasswordInput)
-    organization_name = forms.CharField(label='Organización', max_length=120)
+class EmailAuthenticationForm(EnterpriseAuthFormMixin, AuthenticationForm):
+    username = forms.EmailField(
+        label='Email corporativo',
+        widget=forms.EmailInput(
+            attrs={
+                'placeholder': 'security@empresa.com',
+                'autocomplete': 'email',
+            }
+        ),
+    )
+    password = forms.CharField(
+        label='Contraseña',
+        strip=False,
+        widget=forms.PasswordInput(
+            attrs={
+                'placeholder': '••••••••',
+                'autocomplete': 'current-password',
+            }
+        ),
+    )
+    remember_me = forms.BooleanField(label='Recordarme en este dispositivo', required=False)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        for field in self.fields.values():
-            field.widget.attrs['class'] = 'form-control'
+        self._apply_enterprise_styles()
+        self.fields['remember_me'].widget.attrs['class'] = 'form-check-input'
+
+
+class RegistrationForm(EnterpriseAuthFormMixin, forms.Form):
+    first_name = forms.CharField(label='Nombre', max_length=150)
+    last_name = forms.CharField(label='Apellido', max_length=150)
+    email = forms.EmailField(label='Email corporativo')
+    organization_name = forms.CharField(label='Organización', max_length=120)
+    password1 = forms.CharField(
+        label='Contraseña',
+        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+        help_text='Usa al menos 8 caracteres, combinando letras, números y símbolos.',
+    )
+    password2 = forms.CharField(
+        label='Confirmar contraseña',
+        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._apply_enterprise_styles()
 
     def clean_email(self):
         email = self.cleaned_data['email'].lower().strip()
@@ -31,9 +72,17 @@ class RegistrationForm(forms.Form):
             raise forms.ValidationError('Ya existe una cuenta con ese email.')
         return email
 
+    def clean_password1(self):
+        password = self.cleaned_data['password1']
+        try:
+            validate_password(password)
+        except ValidationError as exc:
+            raise forms.ValidationError(exc.messages)
+        return password
+
     def clean(self):
         cleaned = super().clean()
-        if cleaned.get('password1') != cleaned.get('password2'):
+        if cleaned.get('password1') and cleaned.get('password2') and cleaned.get('password1') != cleaned.get('password2'):
             self.add_error('password2', 'Las contraseñas no coinciden.')
         return cleaned
 

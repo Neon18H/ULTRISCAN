@@ -1,11 +1,12 @@
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.mixins import UserPassesTestMixin
 from django.db import OperationalError, ProgrammingError
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.shortcuts import redirect
 from django.urls import reverse
-from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView
+from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView, View
 
 from accounts.tenancy import TenantQuerysetMixin, get_active_organization
 from assets.models import Asset
@@ -15,6 +16,7 @@ from scan_profiles.models import ScanProfile
 from scans.models import ScanExecution, ServiceFinding
 
 from .forms import AssetForm
+from .reports import build_executive_summary_pdf, build_technical_findings_pdf
 
 
 def safe_query(default, query_fn):
@@ -179,22 +181,147 @@ class AssetDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         return context
 
 
-class FindingListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):
-    model = Finding
-    template_name = 'dashboard/findings_list.html'
+class FindingFilterMixin:
+    severity_values = [choice[0] for choice in Finding.Severity.choices]
+    status_values = [choice[0] for choice in Finding.Status.choices]
+    confidence_values = [choice[0] for choice in Finding.Confidence.choices]
 
-    def get_queryset(self):
+    def get_base_queryset(self):
+        organization = get_active_organization(self.request.user)
+        if not organization:
+            raise PermissionDenied('No existe una organización activa para este usuario.')
         return (
-            super()
-            .get_queryset()
-            .select_related('asset', 'service_finding', 'scan_execution')
+            Finding.objects.filter(organization=organization)
+            .select_related('asset', 'service_finding', 'scan_execution', 'raw_evidence')
             .order_by('-created_at')
         )
+
+    def apply_filters(self, queryset):
+        params = self.request.GET
+
+        severity = params.get('severity')
+        if severity in self.severity_values:
+            queryset = queryset.filter(severity=severity)
+
+        status = params.get('status')
+        if status in self.status_values:
+            queryset = queryset.filter(status=status)
+
+        confidence = params.get('confidence')
+        if confidence in self.confidence_values:
+            queryset = queryset.filter(confidence=confidence)
+
+        asset = params.get('asset', '').strip()
+        if asset:
+            queryset = queryset.filter(
+                Q(asset__name__icontains=asset) |
+                Q(asset__value__icontains=asset)
+            )
+
+        service = params.get('service', '').strip()
+        if service:
+            queryset = queryset.filter(service_finding__service__icontains=service)
+
+        port = params.get('port', '').strip()
+        if port.isdigit():
+            queryset = queryset.filter(service_finding__port=int(port))
+
+        date_from = params.get('date_from')
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+
+        date_to = params.get('date_to')
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+
+        query = params.get('query', '').strip()
+        if query:
+            queryset = queryset.filter(Q(title__icontains=query) | Q(description__icontains=query))
+
+        return queryset
+
+    def get_active_filter_chips(self):
+        labels = {
+            'severity': 'Severidad',
+            'status': 'Estado',
+            'confidence': 'Confidence',
+            'asset': 'Activo',
+            'service': 'Servicio',
+            'port': 'Puerto',
+            'date_from': 'Desde',
+            'date_to': 'Hasta',
+            'query': 'Búsqueda',
+        }
+        chips = []
+        for key, label in labels.items():
+            value = self.request.GET.get(key, '').strip()
+            if value:
+                chips.append({'label': label, 'value': value})
+        return chips
+
+    def get_querystring_without_page(self):
+        params = self.request.GET.copy()
+        params.pop('page', None)
+        return params.urlencode()
+
+
+class FindingListView(LoginRequiredMixin, TenantQuerysetMixin, FindingFilterMixin, ListView):
+    model = Finding
+    template_name = 'dashboard/findings_list.html'
+    paginate_by = 20
+
+    def get_queryset(self):
+        queryset = self.apply_filters(self.get_base_queryset())
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        org = get_active_organization(self.request.user)
+        context['organization'] = org
+        context['severity_choices'] = Finding.Severity.choices
+        context['status_choices'] = Finding.Status.choices
+        context['confidence_choices'] = Finding.Confidence.choices
+        context['active_filter_chips'] = self.get_active_filter_chips()
+        context['result_count'] = self.object_list.count()
+        context['current_querystring'] = self.get_querystring_without_page()
+        return context
 
 
 class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
     model = Finding
     template_name = 'dashboard/finding_detail.html'
+
+
+class FindingsTechnicalPdfView(LoginRequiredMixin, FindingFilterMixin, View):
+    def get(self, request, *args, **kwargs):
+        queryset = self.apply_filters(self.get_base_queryset())
+        org = get_active_organization(request.user)
+        response = build_technical_findings_pdf(
+            organization=org,
+            findings=queryset,
+            generated_by=request.user,
+            applied_filters=self.get_active_filter_chips(),
+        )
+        return response
+
+
+class ExecutiveSummaryPdfView(LoginRequiredMixin, View):
+    def get(self, request, *args, **kwargs):
+        org = get_active_organization(request.user)
+        if not org:
+            raise PermissionDenied('No existe una organización activa para este usuario.')
+        findings = Finding.objects.filter(organization=org).select_related('asset')
+        assets = Asset.objects.filter(organization=org)
+        scans = ScanExecution.objects.filter(organization=org).select_related('asset', 'profile').order_by('-created_at')
+
+        response = build_executive_summary_pdf(
+            organization=org,
+            findings=findings,
+            assets=assets,
+            scans=scans,
+            generated_by=request.user,
+        )
+        return response
 
 
 class KnowledgeBaseListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
