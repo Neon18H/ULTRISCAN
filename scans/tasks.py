@@ -66,6 +66,7 @@ def run_scan_task(self, scan_execution_id: int) -> None:
 
         scan.command_executed = run_result.command
         scan.engine_metadata = {**(scan.engine_metadata or {}), 'runner_metadata': runner_metadata}
+        logger.info('Scan %s executing command: %s', scan.id, run_result.command)
 
         if runner_metadata.get('fallback_used'):
             logger.warning(
@@ -73,6 +74,10 @@ def run_scan_task(self, scan_execution_id: int) -> None:
                 scan.id,
                 runner_metadata.get('initial_command'),
             )
+        if runner_metadata.get('timed_out'):
+            logger.warning('Scan %s timed out after %ss.', scan.id, runner_metadata.get('timeout_seconds'))
+        if runner_metadata.get('scan_truncated'):
+            logger.warning('Scan %s produced truncated output.', scan.id)
 
         if run_result.return_code != 0:
             raise RuntimeError(run_result.stderr or 'Nmap returned non-zero exit status')

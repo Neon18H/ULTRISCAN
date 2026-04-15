@@ -28,7 +28,7 @@ class Command(BaseCommand):
     def _seed_scan_profiles(self):
         profiles = [
             ('discovery', 'Descubrimiento inicial seguro de host/servicios'),
-            ('full_tcp_safe', 'Escaneo TCP completo defensivo con detección de versiones'),
+            ('full_tcp_safe', 'Escaneo TCP defensivo sobre top 1000 puertos con detección de versiones'),
             ('web_basic', 'Orquesta fingerprinting web básico en puertos HTTP/HTTPS'),
             ('wordpress', 'Prepara orquestación WordPress cuando se detecta tecnología'),
             ('misconfiguration', 'Escaneo orientado a señales de mala configuración'),

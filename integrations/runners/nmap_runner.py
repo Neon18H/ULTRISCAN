@@ -31,7 +31,7 @@ class NmapRunner:
 
     PROFILE_ARGS = {
         'discovery': ['-sT', '-Pn', '-n', '--unprivileged'],
-        'full_tcp_safe': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '-p-'],
+        'full_tcp_safe': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--top-ports', '1000'],
     }
 
     FALLBACK_PROFILE_ARGS = {
@@ -76,25 +76,43 @@ class NmapRunner:
 
     def _run_command(self, target: str, args: list[str], profile: str, mode: str) -> NmapRunResult:
         cmd = [self.base_binary, '-oX', '-', *args, target]
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_seconds,
-            check=False,
-        )
+        timed_out = False
+        scan_truncated = False
+        try:
+            completed = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+            return_code = completed.returncode
+            stdout = completed.stdout
+            stderr = completed.stderr
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            scan_truncated = True
+            return_code = 124
+            stdout = exc.stdout or ''
+            stderr = (
+                f'Nmap scan timed out after {self.timeout_seconds} seconds '
+                f'and output may be truncated.'
+            )
+
         return NmapRunResult(
             command=' '.join(cmd),
-            return_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-            xml_output=completed.stdout,
+            return_code=return_code,
+            stdout=stdout,
+            stderr=stderr,
+            xml_output=stdout,
             metadata={
                 'profile': profile,
                 'target': target,
                 'timeout_seconds': self.timeout_seconds,
                 'mode': mode,
                 'fallback_used': False,
+                'timed_out': timed_out,
+                'scan_truncated': scan_truncated,
             },
         )
 
