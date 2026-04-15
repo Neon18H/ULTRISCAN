@@ -1,0 +1,16 @@
+[
+  {"name": "OpenSSH", "vendor": "OpenBSD"},
+  {"name": "Apache HTTP Server", "vendor": "Apache Software Foundation"},
+  {"name": "nginx", "vendor": "F5 / NGINX"},
+  {"name": "WordPress", "vendor": "WordPress Foundation"},
+  {"name": "PHP", "vendor": "The PHP Group"},
+  {"name": "FTP", "vendor": "Generic"},
+  {"name": "MySQL", "vendor": "Oracle"},
+  {"name": "Microsoft SQL Server", "vendor": "Microsoft"},
+  {"name": "SMB / Microsoft-DS", "vendor": "Microsoft"},
+  {"name": "Elasticsearch", "vendor": "Elastic"},
+  {"name": "PPTP", "vendor": "Microsoft"},
+  {"name": "SIP", "vendor": "IETF"},
+  {"name": "Generic HTTP Service", "vendor": "Generic"},
+  {"name": "Generic HTTPS Service", "vendor": "Generic"}
+]

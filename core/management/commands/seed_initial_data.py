@@ -1,12 +1,24 @@
+import json
+from pathlib import Path
+
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
 from accounts.models import Organization
-from knowledge_base.models import EndOfLifeRule, MisconfigurationRule, Product, ProductAlias, ReferenceLink, RemediationTemplate, VulnerabilityRule
+from knowledge_base.models import (
+    EndOfLifeRule,
+    MisconfigurationRule,
+    Product,
+    ProductAlias,
+    ReferenceLink,
+    RemediationTemplate,
+    VulnerabilityRule,
+)
 from scan_profiles.models import ScanProfile
 
 
 class Command(BaseCommand):
-    help = 'Carga datos semilla iniciales para vulnsight.'
+    help = 'Carga datos semilla iniciales para VulnSight.'
 
     def handle(self, *args, **options):
         self._seed_scan_profiles()
@@ -29,90 +41,118 @@ class Command(BaseCommand):
                     defaults=self._scan_profile_defaults(name, description),
                 )
 
+    @transaction.atomic
     def _seed_knowledge_base(self):
-        update_remediation, _ = RemediationTemplate.objects.update_or_create(
-            title='Actualización de servicio',
-            defaults={'body': 'Actualizar a una versión soportada y volver a escanear para validar mitigación.'},
+        seed_dir = Path(__file__).resolve().parents[3] / 'knowledge_base' / 'seed_data'
+
+        products_map = {}
+        for item in self._load(seed_dir / 'products.json'):
+            product, _ = Product.objects.update_or_create(
+                name=item['name'],
+                defaults={'vendor': item.get('vendor', '')},
+            )
+            products_map[product.name] = product
+
+        remediations_map = {}
+        for item in self._load(seed_dir / 'remediations.json'):
+            remediation, _ = RemediationTemplate.objects.update_or_create(
+                title=item['title'],
+                defaults={'body': item['body']},
+            )
+            remediations_map[remediation.title] = remediation
+
+        for item in self._load(seed_dir / 'aliases.json'):
+            product = products_map[item['product']]
+            ProductAlias.objects.update_or_create(alias=item['alias'], defaults={'product': product})
+
+        vuln_rules = self._seed_rules(
+            self._load(seed_dir / 'vulnerability_rules.json'),
+            VulnerabilityRule,
+            products_map,
+            remediations_map,
         )
-        hardening_remediation, _ = RemediationTemplate.objects.update_or_create(
-            title='Endurecimiento de configuración',
-            defaults={'body': 'Aplicar configuración segura del servicio y restringir exposición de red.'},
+        misconf_rules = self._seed_rules(
+            self._load(seed_dir / 'misconfiguration_rules.json'),
+            MisconfigurationRule,
+            products_map,
+            remediations_map,
+        )
+        eol_rules = self._seed_rules(
+            self._load(seed_dir / 'eol_rules.json'),
+            EndOfLifeRule,
+            products_map,
+            remediations_map,
+        )
+        self._seed_rules(
+            self._load(seed_dir / 'exposure_rules.json'),
+            MisconfigurationRule,
+            products_map,
+            remediations_map,
         )
 
-        products = {
-            'OpenSSH': {'aliases': ['OpenSSH']},
-            'Apache HTTP Server': {'aliases': ['Apache httpd', 'apache']},
-            'nginx': {'aliases': ['nginx']},
-            'WordPress': {'aliases': ['WordPress']},
-            'PHP': {'aliases': ['php']},
-            'FTP': {'aliases': ['ftp']},
-            'Generic Web Panel': {'aliases': ['admin panel']},
-        }
-
-        for product_name, data in products.items():
-            product, _ = Product.objects.update_or_create(name=product_name, defaults={})
-            for alias in data['aliases']:
-                ProductAlias.objects.update_or_create(alias=alias, defaults={'product': product})
-
-        openssh = Product.objects.get(name='OpenSSH')
-        apache = Product.objects.get(name='Apache HTTP Server')
-        nginx = Product.objects.get(name='nginx')
-        wordpress = Product.objects.get(name='WordPress')
-        php = Product.objects.get(name='PHP')
-        ftp = Product.objects.get(name='FTP')
-        web_panel = Product.objects.get(name='Generic Web Panel')
-
-        ssh_rule, _ = VulnerabilityRule.objects.update_or_create(
-            title='OpenSSH potencialmente desactualizado',
-            product=openssh,
-            defaults={'severity': 'medium', 'confidence': 'high', 'cvss': 6.5, 'description': 'Versión de OpenSSH en rama antigua detectada.', 'min_version': '1.0', 'max_version': '8.8', 'port': 22, 'protocol': 'tcp', 'remediation_template': update_remediation},
-        )
-        apache_eol, _ = EndOfLifeRule.objects.update_or_create(
-            title='Apache HTTP Server fuera de soporte',
-            product=apache,
-            defaults={'severity': 'high', 'confidence': 'medium', 'description': 'Se detecta versión de Apache en rango EOL.', 'min_version': '1.0', 'max_version': '2.3.99', 'port': 80, 'protocol': 'tcp', 'remediation_template': update_remediation},
-        )
-        VulnerabilityRule.objects.update_or_create(
-            title='nginx con versión antigua',
-            product=nginx,
-            defaults={'severity': 'medium', 'confidence': 'medium', 'description': 'nginx en versión antigua con historial de vulnerabilidades.', 'min_version': '1.0', 'max_version': '1.18.0', 'port': 80, 'protocol': 'tcp', 'remediation_template': update_remediation},
-        )
-        EndOfLifeRule.objects.update_or_create(
-            title='WordPress desactualizado',
-            product=wordpress,
-            defaults={'severity': 'high', 'confidence': 'medium', 'description': 'WordPress detectado en rama potencialmente desactualizada.', 'min_version': '1.0', 'max_version': '6.1.0', 'port': 80, 'protocol': 'tcp', 'remediation_template': update_remediation},
-        )
-        EndOfLifeRule.objects.update_or_create(
-            title='PHP fuera de soporte',
-            product=php,
-            defaults={'severity': 'high', 'confidence': 'medium', 'description': 'Versión de PHP fuera de soporte activo.', 'min_version': '1.0', 'max_version': '7.4.99', 'protocol': 'tcp', 'remediation_template': update_remediation},
-        )
-        MisconfigurationRule.objects.update_or_create(
-            title='Servicio FTP potencialmente permisivo',
-            product=ftp,
-            defaults={'severity': 'medium', 'confidence': 'low', 'description': 'Servicio FTP expuesto. Validar que no exista acceso anónimo.', 'port': 21, 'protocol': 'tcp', 'required_evidence': 'anonymous', 'remediation_template': hardening_remediation},
-        )
-        MisconfigurationRule.objects.update_or_create(
-            title='Panel administrativo expuesto',
-            product=web_panel,
-            defaults={'severity': 'medium', 'confidence': 'low', 'description': 'Interfaz administrativa expuesta públicamente.', 'port': 80, 'protocol': 'tcp', 'required_evidence': 'admin', 'remediation_template': hardening_remediation},
-        )
-        MisconfigurationRule.objects.update_or_create(
-            title='Headers de seguridad ausentes (preparada)',
-            product=apache,
-            defaults={'severity': 'low', 'confidence': 'low', 'description': 'Regla preparada para evidencias web de headers de seguridad.', 'required_evidence': 'missing-security-headers', 'remediation_template': hardening_remediation},
+        self._seed_references(
+            self._load(seed_dir / 'references.json'),
+            vuln_rules,
+            misconf_rules,
+            eol_rules,
         )
 
-        ReferenceLink.objects.update_or_create(
-            vulnerability_rule=ssh_rule,
-            url='https://www.openssh.com/releasenotes.html',
-            defaults={'label': 'OpenSSH'},
-        )
-        ReferenceLink.objects.update_or_create(
-            end_of_life_rule=apache_eol,
-            url='https://endoflife.date/apache-http-server',
-            defaults={'label': 'Apache HTTP Server'},
-        )
+    def _seed_rules(self, records, model_cls, products_map, remediations_map):
+        rules = {}
+        for item in records:
+            product = products_map[item['product']]
+            remediation = remediations_map.get(item.get('remediation'))
+            defaults = {
+                'description': item['description'],
+                'severity': item.get('severity', 'medium'),
+                'confidence': item.get('confidence', 'medium'),
+                'cvss': item.get('cvss', 0.0),
+                'min_version': item.get('min_version', ''),
+                'max_version': item.get('max_version', ''),
+                'version_operator': item.get('version_operator', ''),
+                'version_value': item.get('version_value', ''),
+                'service_name': item.get('service_name', ''),
+                'port': item.get('port'),
+                'protocol': item.get('protocol', ''),
+                'required_state': item.get('required_state', ''),
+                'evidence_type': item.get('evidence_type', ''),
+                'required_evidence': item.get('required_evidence', ''),
+                'remediation_template': remediation,
+            }
+            if model_cls is VulnerabilityRule:
+                defaults['cve'] = item.get('cve', '')
+            if model_cls is EndOfLifeRule:
+                defaults['eol_date'] = item.get('eol_date')
+
+            rule, _ = model_cls.objects.update_or_create(
+                title=item['title'],
+                product=product,
+                defaults=defaults,
+            )
+            rules[rule.title] = rule
+        return rules
+
+    def _seed_references(self, records, vuln_rules, misconf_rules, eol_rules):
+        for item in records:
+            rule_type = item['rule_type']
+            title = item['rule_title']
+            if rule_type == 'vulnerability':
+                kwargs = {'vulnerability_rule': vuln_rules[title]}
+            elif rule_type == 'misconfiguration':
+                kwargs = {'misconfiguration_rule': misconf_rules[title]}
+            elif rule_type == 'eol':
+                kwargs = {'end_of_life_rule': eol_rules[title]}
+            else:
+                raise ValueError(f"Tipo de regla no soportado: {rule_type}")
+
+            ReferenceLink.objects.update_or_create(
+                url=item['url'],
+                defaults={'label': item['label'], **kwargs},
+            )
+
+    def _load(self, filepath: Path):
+        with filepath.open('r', encoding='utf-8') as f:
+            return json.load(f)
 
     def _scan_profile_defaults(self, name, description):
         return {

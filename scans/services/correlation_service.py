@@ -10,16 +10,18 @@ class CorrelationService:
     def normalize_product_name(self, raw_product: str) -> str:
         if not raw_product:
             return ''
-        alias = ProductAlias.objects.filter(alias__iexact=raw_product.strip()).select_related('product').first()
+        value = raw_product.strip()
+        alias = ProductAlias.objects.filter(alias__iexact=value).select_related('product').first()
         if alias:
             return alias.product.name
-        direct = Product.objects.filter(name__iexact=raw_product.strip()).first()
-        return direct.name if direct else raw_product.strip()
+        direct = Product.objects.filter(name__iexact=value).first()
+        return direct.name if direct else value
 
     def correlate_scan_execution(self, scan_execution):
         findings = []
         for service in scan_execution.service_findings.all():
-            normalized_product = self.normalize_product_name(service.product or service.service)
+            raw_identifier = service.product or service.service
+            normalized_product = self.normalize_product_name(raw_identifier)
             if normalized_product != service.normalized_product:
                 service.normalized_product = normalized_product
                 service.save(update_fields=['normalized_product', 'updated_at'])
@@ -39,16 +41,61 @@ class CorrelationService:
             return False
         return True
 
+    def _compare_version(self, current: str, operator: str, expected: str) -> bool:
+        if not current or not operator or not expected:
+            return False
+        parsed_current = version.parse(current)
+        parsed_expected = version.parse(expected)
+        if operator == '<':
+            return parsed_current < parsed_expected
+        if operator == '<=':
+            return parsed_current <= parsed_expected
+        if operator == '>':
+            return parsed_current > parsed_expected
+        if operator == '>=':
+            return parsed_current >= parsed_expected
+        if operator == '==':
+            return parsed_current == parsed_expected
+        return False
+
+    def _collect_evidence_tokens(self, service) -> set[str]:
+        values = [service.service, service.product, service.normalized_product, service.banner, service.extrainfo, service.state]
+        tokens = {str(v).lower() for v in values if v}
+        if (service.state or '').lower() == 'open':
+            tokens.add('network_exposure')
+
+        for script in service.scripts or []:
+            if isinstance(script, dict):
+                for key, value in script.items():
+                    tokens.add(str(key).lower())
+                    tokens.add(str(value).lower())
+            else:
+                tokens.add(str(script).lower())
+        return tokens
+
     def _rule_matches_service(self, rule, service, normalized_product: str) -> bool:
         if rule.product.name.lower() != normalized_product.lower():
             return False
+        if rule.service_name and rule.service_name.lower() != (service.service or '').lower():
+            return False
         if rule.port and rule.port != service.port:
             return False
-        if rule.protocol and rule.protocol.lower() != service.protocol.lower():
+        if rule.protocol and rule.protocol.lower() != (service.protocol or '').lower():
             return False
-        if (rule.min_version or rule.max_version) and not self._version_in_range(service.version, rule.min_version, rule.max_version):
+        if rule.required_state and rule.required_state.lower() != (service.state or '').lower():
             return False
-        if rule.required_evidence and rule.required_evidence.lower() not in (service.banner or '').lower():
+
+        if rule.version_operator and rule.version_value:
+            if not self._compare_version(service.version, rule.version_operator, rule.version_value):
+                return False
+        elif rule.min_version or rule.max_version:
+            if not self._version_in_range(service.version, rule.min_version, rule.max_version):
+                return False
+
+        evidence_tokens = self._collect_evidence_tokens(service)
+        if rule.evidence_type and not any(rule.evidence_type.lower() in token for token in evidence_tokens):
+            return False
+        if rule.required_evidence and not any(rule.required_evidence.lower() in token for token in evidence_tokens):
             return False
         return True
 
