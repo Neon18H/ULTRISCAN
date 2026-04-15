@@ -1,0 +1,38 @@
+[
+  {
+    "rule_type": "vulnerability",
+    "rule_title": "OpenSSH legacy branch detected",
+    "label": "OpenSSH Release Notes",
+    "url": "https://www.openssh.com/releasenotes.html"
+  },
+  {
+    "rule_type": "vulnerability",
+    "rule_title": "WordPress core outdated baseline",
+    "label": "WordPress Security Releases",
+    "url": "https://wordpress.org/news/category/security/"
+  },
+  {
+    "rule_type": "eol",
+    "rule_title": "PHP legacy branch end-of-life",
+    "label": "PHP Supported Versions",
+    "url": "https://www.php.net/supported-versions.php"
+  },
+  {
+    "rule_type": "eol",
+    "rule_title": "Legacy Apache family branch",
+    "label": "Apache HTTP Server Lifecycle",
+    "url": "https://endoflife.date/apache-http-server"
+  },
+  {
+    "rule_type": "misconfiguration",
+    "rule_title": "Elasticsearch exposed without restriction",
+    "label": "Elastic Security Guidance",
+    "url": "https://www.elastic.co/guide/en/elasticsearch/reference/current/security-settings.html"
+  },
+  {
+    "rule_type": "misconfiguration",
+    "rule_title": "SMB exposed to internet",
+    "label": "CISA SMB Hardening",
+    "url": "https://www.cisa.gov/news-events/alerts/2017/01/16/smb-security-best-practices"
+  }
+]

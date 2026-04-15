@@ -3,7 +3,7 @@ from django.test import TestCase
 
 from accounts.models import Organization, OrganizationMembership
 from assets.models import Asset
-from knowledge_base.models import Product, ProductAlias, RemediationTemplate, VulnerabilityRule
+from knowledge_base.models import MisconfigurationRule, Product, ProductAlias, RemediationTemplate, VulnerabilityRule
 from scan_profiles.models import ScanProfile
 from scans.models import ScanExecution, ServiceFinding
 from scans.services.correlation_service import CorrelationService
@@ -29,6 +29,7 @@ class CorrelationTests(TestCase):
             max_version='2.4.49',
             port=80,
             protocol='tcp',
+            required_state='open',
             severity='high',
             confidence='high',
             description='desc',
@@ -51,3 +52,37 @@ class CorrelationTests(TestCase):
         self.assertEqual(len(findings), 1)
         svc.refresh_from_db()
         self.assertEqual(svc.normalized_product, 'Apache HTTP Server')
+
+    def test_exposure_rule_matches_without_version(self):
+        product = Product.objects.create(name='FTP')
+        ProductAlias.objects.create(product=product, alias='ftp')
+        rem = RemediationTemplate.objects.create(title='r2', body='restrict')
+        MisconfigurationRule.objects.create(
+            title='FTP exposed on 21',
+            product=product,
+            service_name='ftp',
+            port=21,
+            protocol='tcp',
+            required_state='open',
+            evidence_type='network_exposure',
+            severity='medium',
+            confidence='high',
+            description='desc',
+            remediation_template=rem,
+        )
+
+        ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=21,
+            protocol='tcp',
+            state='open',
+            service='ftp',
+            product='',
+            version='',
+        )
+
+        findings = CorrelationService().correlate_scan_execution(self.scan)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].title, 'FTP exposed on 21')

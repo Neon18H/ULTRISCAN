@@ -1,0 +1,51 @@
+[
+  {
+    "title": "PHP legacy branch end-of-life",
+    "product": "PHP",
+    "required_state": "open",
+    "version_operator": "<=",
+    "version_value": "7.4.99",
+    "severity": "high",
+    "confidence": "high",
+    "cvss": 8.1,
+    "description": "Detected PHP version is in a legacy branch that no longer receives regular security updates.",
+    "eol_date": "2022-11-28",
+    "remediation": "upgrade_software"
+  },
+  {
+    "title": "WordPress below maintained baseline",
+    "product": "WordPress",
+    "required_state": "open",
+    "version_operator": "<",
+    "version_value": "6.3.0",
+    "severity": "medium",
+    "confidence": "medium",
+    "cvss": 6.8,
+    "description": "WordPress version is below the maintained baseline for security-focused deployments.",
+    "remediation": "upgrade_software"
+  },
+  {
+    "title": "Legacy Apache family branch",
+    "product": "Apache HTTP Server",
+    "required_state": "open",
+    "version_operator": "<",
+    "version_value": "2.4.0",
+    "severity": "high",
+    "confidence": "high",
+    "cvss": 7.8,
+    "description": "Apache HTTP Server appears to belong to a legacy family branch outside modern support expectations.",
+    "remediation": "upgrade_software"
+  },
+  {
+    "title": "Legacy nginx family branch",
+    "product": "nginx",
+    "required_state": "open",
+    "version_operator": "<",
+    "version_value": "1.18.0",
+    "severity": "medium",
+    "confidence": "medium",
+    "cvss": 6.1,
+    "description": "nginx version appears in an older family branch. Validate lifecycle and upgrade policy.",
+    "remediation": "upgrade_software"
+  }
+]

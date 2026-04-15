@@ -1,0 +1,9 @@
+[
+  {"title": "upgrade_software", "body": "Upgrade to a currently supported stable version following vendor guidance. Validate the upgrade in staging and rerun scans to confirm risk reduction."},
+  {"title": "restrict_service_exposure", "body": "Restrict service exposure using firewall rules, security groups, and host-based controls so only approved source networks can reach the service."},
+  {"title": "disable_anonymous_access", "body": "Disable anonymous access and enforce authenticated access with least privilege. Review existing anonymous shares or accounts and remove them."},
+  {"title": "add_security_headers", "body": "Add HTTP security headers such as Content-Security-Policy, X-Frame-Options, Referrer-Policy, and HSTS where applicable."},
+  {"title": "enforce_network_segmentation", "body": "Move sensitive services to segmented internal networks. Require jump hosts, VPN, or controlled proxy access for administration workflows."},
+  {"title": "close_unused_ports", "body": "Close non-essential ports and disable unneeded services. Keep a documented list of required ports and continuously verify exposure."},
+  {"title": "place_service_behind_vpn_or_allowlist", "body": "Place management interfaces behind VPN, private connectivity, or strict allowlists. Avoid exposing administrative portals directly to the internet."}
+]
