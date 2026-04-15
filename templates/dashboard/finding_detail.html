@@ -22,18 +22,51 @@
       {% include 'includes/section_header.html' with eyebrow='Evidence' title='Evidencia principal' %}
       <div class="row g-3">
         <div class="col-md-6">
-          <div class="small text-muted">Tipo de evidencia</div>
-          <div class="fw-semibold">{{ object.raw_evidence.source|default:'No especificado' }}</div>
+          <div class="small text-muted">Evidencia fuente</div>
+          <div class="fw-semibold">{{ object.raw_evidence.source|default:'Service finding' }}</div>
+          {% if object.raw_evidence_id %}
+          <div class="small text-muted">ID: {{ object.raw_evidence_id }}</div>
+          {% endif %}
         </div>
         <div class="col-md-6">
           <div class="small text-muted">Servicio / Puerto</div>
-          <div class="fw-semibold">{{ object.service_finding.service|default:'N/A' }}{% if object.service_finding.port %}:{{ object.service_finding.port }}{% endif %}</div>
+          <div class="fw-semibold">{{ object.service_finding.service|default:'N/A' }}{% if object.service_finding.port %}:{{ object.service_finding.port }}{% endif %} / {{ object.service_finding.protocol|default:'-' }}</div>
+        </div>
+        <div class="col-md-4">
+          <div class="small text-muted">Producto detectado</div>
+          <div class="fw-semibold">{{ object.service_finding.normalized_product|default:object.service_finding.product|default:'No identificado' }}</div>
+        </div>
+        <div class="col-md-4">
+          <div class="small text-muted">Versión detectada (raw)</div>
+          <div class="fw-semibold">{{ object.service_finding.raw_version|default:object.service_finding.version|default:'-' }}</div>
+        </div>
+        <div class="col-md-4">
+          <div class="small text-muted">Versión normalizada</div>
+          <div class="fw-semibold">{{ object.service_finding.normalized_version|default:'-' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="small text-muted">Regla que hizo match</div>
+          <div class="fw-semibold">{{ matched_rule.title|default:'No disponible' }}</div>
+          <div class="small text-muted">{{ matched_rule_type }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="small text-muted">Motivo de generación</div>
+          <div class="fw-semibold">{{ object.correlation_trace.match_reasons|join:', '|default:'No disponible' }}</div>
         </div>
         <div class="col-12">
-          <div class="small text-muted">Evidencia</div>
+          <div class="small text-muted">Evidencia textual</div>
           <code class="d-block bg-light border rounded p-2 text-wrap">{{ object.raw_evidence.raw_output|default:'Sin evidencia textual disponible.'|truncatechars:700 }}</code>
         </div>
       </div>
+    </div>
+
+    <div class="surface-card p-3 p-xl-4 mb-3">
+      {% include 'includes/section_header.html' with eyebrow='Correlation trace' title='Trazabilidad del correlador' %}
+      {% if object.correlation_trace %}
+      <pre class="bg-light border rounded p-3 small mb-0 text-wrap">{{ object.correlation_trace|pprint }}</pre>
+      {% else %}
+      <p class="text-muted mb-0">No hay trazabilidad registrada para este finding.</p>
+      {% endif %}
     </div>
 
     <div class="surface-card p-3 p-xl-4 mb-3">

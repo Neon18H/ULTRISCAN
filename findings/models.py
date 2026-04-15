@@ -43,6 +43,7 @@ class Finding(TimeStampedModel):
     confidence = models.CharField(max_length=20, choices=Confidence.choices)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
     analyst_notes = models.TextField(blank=True)
+    correlation_trace = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ['-created_at']

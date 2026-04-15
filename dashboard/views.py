@@ -318,8 +318,37 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
     model = Finding
     template_name = 'dashboard/finding_detail.html'
 
+    def get_queryset(self):
+        organization = get_active_organization(self.request.user)
+        if not organization:
+            raise PermissionDenied('No existe una organización activa para este usuario.')
+        return (
+            Finding.objects.filter(organization=organization)
+            .select_related(
+                'asset',
+                'scan_execution',
+                'service_finding',
+                'raw_evidence',
+                'vulnerability_rule',
+                'misconfiguration_rule',
+                'end_of_life_rule',
+            )
+            .order_by('-created_at')
+        )
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        matched_rule = self.object.vulnerability_rule or self.object.misconfiguration_rule or self.object.end_of_life_rule
+        context['matched_rule'] = matched_rule
+        context['matched_rule_type'] = (
+            'Vulnerability'
+            if self.object.vulnerability_rule
+            else 'Misconfiguration'
+            if self.object.misconfiguration_rule
+            else 'End-of-Life'
+            if self.object.end_of_life_rule
+            else 'Unknown'
+        )
         context['nvd_correlation'] = safe_query(
             FindingNvdCorrelationService()._no_match_payload(self.object),
             lambda: FindingNvdCorrelationService().correlate(self.object),

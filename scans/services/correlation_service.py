@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from findings.models import Finding
 from knowledge_base.models import EndOfLifeRule, MisconfigurationRule, Product, ProductAlias, VulnerabilityRule
@@ -17,6 +18,7 @@ class CorrelationService:
         'mssql': {'ms-sql-s', 'mssql'},
         'elasticsearch': {'elasticsearch', 'wap-wsp'},
     }
+    STRICT_EVIDENCE_PRODUCTS = {'wordpress', 'php'}
 
     def normalize_service_name(self, raw_service: str) -> str:
         value = (raw_service or '').strip().lower()
@@ -40,6 +42,7 @@ class CorrelationService:
     def correlate_scan_execution(self, scan_execution):
         findings = []
         for service in scan_execution.service_findings.all():
+            matched_raw_evidence = self._find_raw_evidence_for_service(scan_execution, service)
             raw_identifier = service.product or service.service
             normalized_product = self.normalize_product_name(raw_identifier)
             normalized_service = self.normalize_service_name(service.service)
@@ -63,9 +66,15 @@ class CorrelationService:
 
             self._ensure_normalized_version(scan_execution, service)
 
-            findings.extend(self._apply_vulnerability_rules(scan_execution, service, normalized_product))
-            findings.extend(self._apply_misconfiguration_rules(scan_execution, service, normalized_product))
-            findings.extend(self._apply_eol_rules(scan_execution, service, normalized_product))
+            findings.extend(
+                self._apply_vulnerability_rules(scan_execution, service, normalized_product, matched_raw_evidence)
+            )
+            findings.extend(
+                self._apply_misconfiguration_rules(scan_execution, service, normalized_product, matched_raw_evidence)
+            )
+            findings.extend(
+                self._apply_eol_rules(scan_execution, service, normalized_product, matched_raw_evidence)
+            )
         return findings
 
     def _version_in_range(self, current: str, min_version: str, max_version: str) -> bool:
@@ -79,7 +88,7 @@ class CorrelationService:
 
     def _ensure_normalized_version(self, scan_execution, service) -> None:
         raw_version = service.raw_version or service.version
-        normalized_version = service.normalized_version or normalize_version(raw_version)
+        normalized_version = normalize_version(raw_version)
         update_fields: list[str] = []
 
         if raw_version and service.raw_version != raw_version:
@@ -101,7 +110,7 @@ class CorrelationService:
                 raw_version,
             )
 
-    def _collect_evidence_tokens(self, service) -> set[str]:
+    def _collect_evidence_tokens(self, service, raw_evidence=None) -> set[str]:
         values = [service.service, service.product, service.normalized_product, service.banner, service.extrainfo, service.state]
         tokens = {str(v).lower() for v in values if v}
         normalized_service = self.normalize_service_name(service.service)
@@ -121,9 +130,53 @@ class CorrelationService:
                     tokens.add(str(value).lower())
             else:
                 tokens.add(str(script).lower())
+
+        if raw_evidence:
+            for source in [raw_evidence.payload, raw_evidence.metadata]:
+                for token in self._flatten_tokens(source):
+                    tokens.add(token)
         return tokens
 
-    def _rule_matches_service(self, rule, service, normalized_product: str) -> tuple[bool, list[str]]:
+    def _flatten_tokens(self, source: Any) -> set[str]:
+        flattened: set[str] = set()
+        if source is None:
+            return flattened
+        if isinstance(source, dict):
+            for key, value in source.items():
+                flattened.add(str(key).strip().lower())
+                flattened.update(self._flatten_tokens(value))
+            return flattened
+        if isinstance(source, (list, tuple, set)):
+            for value in source:
+                flattened.update(self._flatten_tokens(value))
+            return flattened
+        value = str(source).strip().lower()
+        if value:
+            flattened.add(value)
+        return flattened
+
+    def _find_raw_evidence_for_service(self, scan_execution, service):
+        for evidence in scan_execution.raw_evidences.all():
+            if evidence.host and service.host and evidence.host != service.host:
+                continue
+            ports = (evidence.payload or {}).get('ports') or []
+            for parsed_port in ports:
+                if (
+                    parsed_port.get('port') == service.port
+                    and (parsed_port.get('protocol') or '').lower() == (service.protocol or '').lower()
+                ):
+                    return evidence
+        return None
+
+    def _get_version_candidate(self, service) -> str:
+        return (
+            normalize_version(service.normalized_version)
+            or normalize_version(service.raw_version)
+            or normalize_version(service.version)
+            or ''
+        )
+
+    def _rule_matches_service(self, rule, service, normalized_product: str, raw_evidence=None) -> tuple[bool, list[str]]:
         reasons: list[str] = []
         rule_product = (rule.product.name or '').lower()
         observed_product = (normalized_product or '').lower()
@@ -134,6 +187,12 @@ class CorrelationService:
                 reasons.append(f'product mismatch ({rule_product} != {observed_product})')
                 return False, reasons
             reasons.append(f'product mismatch ignored for exposure rule ({rule_product} != {observed_product})')
+        elif rule_product in self.STRICT_EVIDENCE_PRODUCTS:
+            evidence_tokens = self._collect_evidence_tokens(service, raw_evidence)
+            explicit_product_token = rule_product in evidence_tokens
+            if not explicit_product_token:
+                reasons.append(f'missing explicit product evidence for {rule_product}')
+                return False, reasons
 
         expected_service = self.normalize_service_name(rule.service_name)
         observed_service = self.normalize_service_name(service.service)
@@ -151,19 +210,19 @@ class CorrelationService:
             return False, reasons
 
         if rule.version_operator and rule.version_value:
-            version_candidate = service.normalized_version or service.version
+            version_candidate = self._get_version_candidate(service)
             if not self._compare_version(version_candidate, rule.version_operator, rule.version_value):
                 reasons.append(
                     f'version compare failed ({version_candidate} {rule.version_operator} {rule.version_value})'
                 )
                 return False, reasons
         elif rule.min_version or rule.max_version:
-            version_candidate = service.normalized_version or service.version
+            version_candidate = self._get_version_candidate(service)
             if not self._version_in_range(version_candidate, rule.min_version, rule.max_version):
                 reasons.append(f'version range failed ({version_candidate} not in {rule.min_version}..{rule.max_version})')
                 return False, reasons
 
-        evidence_tokens = self._collect_evidence_tokens(service)
+        evidence_tokens = self._collect_evidence_tokens(service, raw_evidence)
         if rule.evidence_type and not any(rule.evidence_type.lower() in token for token in evidence_tokens):
             reasons.append(f'evidence_type {rule.evidence_type} not found in tokens')
             return False, reasons
@@ -188,10 +247,55 @@ class CorrelationService:
             'status': Finding.Status.OPEN,
         }
 
-    def _apply_vulnerability_rules(self, scan_execution, service, normalized_product: str):
+    def _build_trace(self, *, scan_execution, service, rule, rule_kind: str, raw_evidence, reasons: list[str]) -> dict[str, Any]:
+        return {
+            'scan_execution_id': scan_execution.id,
+            'rule_type': rule_kind,
+            'rule_id': rule.id,
+            'rule_title': rule.title,
+            'rule_product': rule.product.name if rule.product else '',
+            'match_reasons': reasons,
+            'source_evidence': {
+                'raw_evidence_id': raw_evidence.id if raw_evidence else None,
+                'host': service.host,
+                'port': service.port,
+                'protocol': service.protocol,
+                'service': service.service,
+            },
+            'detected_product': {
+                'product': service.product,
+                'normalized_product': service.normalized_product or '',
+            },
+            'detected_version': {
+                'raw_version': service.raw_version or service.version,
+                'normalized_version': service.normalized_version or '',
+                'version_used_for_matching': self._get_version_candidate(service),
+            },
+        }
+
+    def _upsert_finding(self, *, scan_execution, service, raw_evidence, defaults, lookup, trace):
+        finding, created = Finding.objects.get_or_create(
+            organization=scan_execution.organization,
+            scan_execution=scan_execution,
+            service_finding=service,
+            **lookup,
+            defaults={**defaults, 'raw_evidence': raw_evidence, 'correlation_trace': trace},
+        )
+        if not created:
+            update_fields: list[str] = []
+            if finding.raw_evidence_id != (raw_evidence.id if raw_evidence else None):
+                finding.raw_evidence = raw_evidence
+                update_fields.append('raw_evidence')
+            finding.correlation_trace = trace
+            update_fields.append('correlation_trace')
+            if update_fields:
+                finding.save(update_fields=[*update_fields, 'updated_at'])
+        return finding
+
+    def _apply_vulnerability_rules(self, scan_execution, service, normalized_product: str, raw_evidence=None):
         created = []
         for rule in VulnerabilityRule.objects.select_related('remediation_template', 'product').prefetch_related('references').all():
-            matched, reasons = self._rule_matches_service(rule, service, normalized_product)
+            matched, reasons = self._rule_matches_service(rule, service, normalized_product, raw_evidence)
             if not matched:
                 logger.debug(
                     'Rule miss [vulnerability] rule=%s service=%s scan=%s reasons=%s',
@@ -201,27 +305,37 @@ class CorrelationService:
                     '; '.join(reasons),
                 )
                 continue
-            finding, _ = Finding.objects.get_or_create(
-                organization=scan_execution.organization,
+            trace = self._build_trace(
                 scan_execution=scan_execution,
-                service_finding=service,
-                vulnerability_rule=rule,
+                service=service,
+                rule=rule,
+                rule_kind='vulnerability',
+                raw_evidence=raw_evidence,
+                reasons=reasons,
+            )
+            finding = self._upsert_finding(
+                scan_execution=scan_execution,
+                service=service,
+                raw_evidence=raw_evidence,
                 defaults=self._build_defaults(scan_execution, rule),
+                lookup={'vulnerability_rule': rule},
+                trace=trace,
             )
             logger.debug(
-                'Rule match [vulnerability] rule=%s service=%s finding=%s scan=%s',
+                'Rule match [vulnerability] rule=%s service=%s finding=%s scan=%s trace=%s',
                 rule.title,
                 service.id,
                 finding.id,
                 scan_execution.id,
+                trace,
             )
             created.append(finding)
         return created
 
-    def _apply_misconfiguration_rules(self, scan_execution, service, normalized_product: str):
+    def _apply_misconfiguration_rules(self, scan_execution, service, normalized_product: str, raw_evidence=None):
         created = []
         for rule in MisconfigurationRule.objects.select_related('remediation_template', 'product').prefetch_related('references').all():
-            matched, reasons = self._rule_matches_service(rule, service, normalized_product)
+            matched, reasons = self._rule_matches_service(rule, service, normalized_product, raw_evidence)
             if not matched:
                 logger.debug(
                     'Rule miss [misconfiguration] rule=%s service=%s scan=%s reasons=%s',
@@ -231,27 +345,37 @@ class CorrelationService:
                     '; '.join(reasons),
                 )
                 continue
-            finding, _ = Finding.objects.get_or_create(
-                organization=scan_execution.organization,
+            trace = self._build_trace(
                 scan_execution=scan_execution,
-                service_finding=service,
-                misconfiguration_rule=rule,
+                service=service,
+                rule=rule,
+                rule_kind='misconfiguration',
+                raw_evidence=raw_evidence,
+                reasons=reasons,
+            )
+            finding = self._upsert_finding(
+                scan_execution=scan_execution,
+                service=service,
+                raw_evidence=raw_evidence,
                 defaults=self._build_defaults(scan_execution, rule),
+                lookup={'misconfiguration_rule': rule},
+                trace=trace,
             )
             logger.debug(
-                'Rule match [misconfiguration] rule=%s service=%s finding=%s scan=%s',
+                'Rule match [misconfiguration] rule=%s service=%s finding=%s scan=%s trace=%s',
                 rule.title,
                 service.id,
                 finding.id,
                 scan_execution.id,
+                trace,
             )
             created.append(finding)
         return created
 
-    def _apply_eol_rules(self, scan_execution, service, normalized_product: str):
+    def _apply_eol_rules(self, scan_execution, service, normalized_product: str, raw_evidence=None):
         created = []
         for rule in EndOfLifeRule.objects.select_related('remediation_template', 'product').prefetch_related('references').all():
-            matched, reasons = self._rule_matches_service(rule, service, normalized_product)
+            matched, reasons = self._rule_matches_service(rule, service, normalized_product, raw_evidence)
             if not matched:
                 logger.debug(
                     'Rule miss [eol] rule=%s service=%s scan=%s reasons=%s',
@@ -261,19 +385,29 @@ class CorrelationService:
                     '; '.join(reasons),
                 )
                 continue
-            finding, _ = Finding.objects.get_or_create(
-                organization=scan_execution.organization,
+            trace = self._build_trace(
                 scan_execution=scan_execution,
-                service_finding=service,
-                end_of_life_rule=rule,
+                service=service,
+                rule=rule,
+                rule_kind='eol',
+                raw_evidence=raw_evidence,
+                reasons=reasons,
+            )
+            finding = self._upsert_finding(
+                scan_execution=scan_execution,
+                service=service,
+                raw_evidence=raw_evidence,
                 defaults=self._build_defaults(scan_execution, rule),
+                lookup={'end_of_life_rule': rule},
+                trace=trace,
             )
             logger.debug(
-                'Rule match [eol] rule=%s service=%s finding=%s scan=%s',
+                'Rule match [eol] rule=%s service=%s finding=%s scan=%s trace=%s',
                 rule.title,
                 service.id,
                 finding.id,
                 scan_execution.id,
+                trace,
             )
             created.append(finding)
         return created
