@@ -1,10 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/sh
 set -e
 
-echo "[entrypoint] Iniciando contenedor vulnsight"
-python --version
+echo "[entrypoint] Starting vulnsight container"
+
 if [ -z "${DJANGO_SETTINGS_MODULE}" ]; then
-  export DJANGO_SETTINGS_MODULE=vulnsight.settings.production
+  export DJANGO_SETTINGS_MODULE="vulnsight.settings.production"
+  echo "[entrypoint] DJANGO_SETTINGS_MODULE not set, defaulting to ${DJANGO_SETTINGS_MODULE}"
+else
+  echo "[entrypoint] DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE}"
 fi
-echo "[entrypoint] Configuración: ${DJANGO_SETTINGS_MODULE}"
+
+if [ "$#" -eq 0 ]; then
+  exec ./start.sh
+fi
+
 exec "$@"
