@@ -28,6 +28,8 @@ class Command(BaseCommand):
     def _seed_scan_profiles(self):
         profiles = [
             ('discovery', 'Descubrimiento inicial seguro de host/servicios'),
+            ('infra_standard', 'Escaneo estándar de infraestructura (top 1000 + detección de versiones)'),
+            ('infra_deep', 'Escaneo profundo opcional de infraestructura (todos los puertos + scripts safe)'),
             ('full_tcp_safe', 'Escaneo TCP defensivo sobre top 1000 puertos con detección de versiones'),
             ('web_basic', 'Pipeline web base de fingerprinting + enumeración + vulnerabilidades'),
             ('wordpress', 'Pipeline especializado para WordPress cuando se detecta CMS'),
@@ -162,6 +164,6 @@ class Command(BaseCommand):
             'port_detection': True,
             'version_detection': True,
             'web_detection': name in {'web_basic', 'wordpress', 'misconfiguration'},
-            'light_enumeration': name in {'full_tcp_safe', 'misconfiguration', 'infra_services'},
+            'light_enumeration': name in {'infra_standard', 'full_tcp_safe', 'misconfiguration', 'infra_services'},
             'wordpress_scan': name == 'wordpress',
         }

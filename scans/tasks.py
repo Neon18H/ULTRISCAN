@@ -6,7 +6,7 @@ from django.utils import timezone
 from findings.services import correlate_scan_execution
 
 from .models import ScanExecution
-from .services.scan_pipeline import INFRA_SCAN_TYPES, WEB_SCAN_TYPES, ScanPipelineService
+from .services.scan_pipeline import INFRA_SCAN_TYPES, WEB_SCAN_TYPES, ScanPipelineExecutionError, ScanPipelineService
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,23 @@ def _run_pipeline(*, scan_execution_id: int, expected: str) -> None:
 
         scan.save(update_fields=['command_executed', 'engine_metadata', 'summary', 'updated_at'])
         _mark_finished(scan, status=ScanExecution.Status.COMPLETED)
+    except ScanPipelineExecutionError as exc:
+        logger.exception('Scan execution %s failed with controlled pipeline error', scan.id)
+        failure_payload = {
+            'error_message': str(exc),
+            'failed_at': timezone.now().isoformat(),
+            'command_executed': exc.command or scan.command_executed,
+            'stderr': exc.stderr,
+            'stdout': exc.stdout,
+            'reason': exc.reason,
+            'retryable': exc.retryable,
+        }
+        scan.command_executed = exc.command or scan.command_executed
+        scan.engine_metadata = {**(scan.engine_metadata or {}), 'failure': failure_payload}
+        scan.save(update_fields=['command_executed', 'engine_metadata', 'updated_at'])
+        _mark_finished(scan, status=ScanExecution.Status.FAILED, error_message=str(exc))
+        if exc.retryable:
+            raise
     except Exception as exc:
         logger.exception('Scan execution %s failed', scan.id)
         scan.engine_metadata = {

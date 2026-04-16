@@ -5,9 +5,10 @@ from scan_profiles.models import ScanProfile
 
 
 SCAN_TYPE_CHOICES = [
-    ('nmap_discovery', 'Nmap Discovery'),
-    ('nmap_full', 'Nmap Full'),
-    ('nmap_services', 'Nmap Services + NSE'),
+    ('nmap_discovery', 'Infra Discovery'),
+    ('nmap_full', 'Infra Standard'),
+    ('infra_deep', 'Infra Deep (Opcional)'),
+    ('nmap_services', 'Infra Services (Compat)'),
     ('web_basic', 'Web Basic'),
     ('web_full', 'Web Full'),
     ('web_wordpress', 'Web WordPress'),
@@ -15,9 +16,10 @@ SCAN_TYPE_CHOICES = [
 ]
 
 SCAN_TYPE_HELP = {
-    'nmap_discovery': 'Descubrimiento rápido de hosts y puertos más comunes.',
-    'nmap_full': 'Escaneo completo TCP con detección de versiones y scripts NSE básicos.',
-    'nmap_services': 'Escaneo de servicios con énfasis en detección real de versiones y scripts NSE.',
+    'nmap_discovery': 'Descubrimiento rápido de hosts y puertos comunes.',
+    'nmap_full': 'Escaneo estándar de infraestructura con detección de versiones sobre top ports.',
+    'infra_deep': 'Escaneo profundo opcional con más cobertura y mayor tiempo de ejecución.',
+    'nmap_services': 'Compatibilidad legacy: usa el perfil estándar de infraestructura.',
     'web_basic': 'Pipeline web base: fingerprint, enumeración y vulnerabilidades.',
     'web_full': 'Pipeline web extendido con mayor enumeración para aplicaciones completas.',
     'web_wordpress': 'Pipeline web con detección CMS y ejecución WordPress dedicada.',
@@ -26,8 +28,9 @@ SCAN_TYPE_HELP = {
 
 SCAN_TYPE_TO_PROFILE = {
     'nmap_discovery': 'discovery',
-    'nmap_full': 'full_tcp_safe',
-    'nmap_services': 'full_tcp_safe',
+    'nmap_full': 'infra_standard',
+    'infra_deep': 'infra_deep',
+    'nmap_services': 'infra_standard',
     'web_basic': 'web_basic',
     'web_full': 'web_basic',
     'web_wordpress': 'wordpress',
@@ -35,6 +38,10 @@ SCAN_TYPE_TO_PROFILE = {
 }
 
 WEB_ONLY_SCAN_TYPES = {'web_basic', 'web_full', 'web_wordpress', 'web_api'}
+PROFILE_NAME_ALIASES = {
+    'infra_standard': {'infra_standard', 'full_tcp_safe'},
+    'infra_deep': {'infra_deep', 'full'},
+}
 
 
 class CreateScanForm(forms.Form):
@@ -76,7 +83,8 @@ class CreateScanForm(forms.Form):
             self.add_error('scan_type', 'Este tipo de activo no aplica para escaneos web. Usa dominio o URL.')
 
         expected_profile_name = SCAN_TYPE_TO_PROFILE.get(scan_type)
-        if profile and expected_profile_name and profile.name.lower() != expected_profile_name:
+        accepted_profile_names = PROFILE_NAME_ALIASES.get(expected_profile_name, {expected_profile_name}) if expected_profile_name else set()
+        if profile and expected_profile_name and profile.name.lower() not in accepted_profile_names:
             self.add_error('profile', f'El perfil seleccionado no corresponde al tipo de escaneo: {expected_profile_name}.')
 
         if self.organization:
@@ -95,7 +103,8 @@ class CreateScanForm(forms.Form):
         defaults = {
             'nmap_discovery': 'nmap',
             'nmap_full': 'nmap',
-            'nmap_services': 'nmap+nse',
+            'infra_deep': 'nmap+nse',
+            'nmap_services': 'nmap',
             'web_basic': 'whatweb+nuclei',
             'web_full': 'whatweb+ffuf+nuclei+nikto',
             'web_wordpress': 'whatweb+nuclei+wpscan',

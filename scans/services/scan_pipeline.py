@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
+from xml.etree import ElementTree as ET
 
 from django.db import transaction
 
@@ -21,14 +23,25 @@ from scans.parsers.web_parsers import (
 from scans.services.versioning import normalize_version
 
 
-INFRA_SCAN_TYPES = {'nmap_discovery', 'nmap_full', 'nmap_services', 'nmap_full_tcp_safe'}
+INFRA_SCAN_TYPES = {
+    'nmap_discovery',
+    'nmap_full',
+    'nmap_services',
+    'nmap_full_tcp_safe',
+    'infra_discovery',
+    'infra_standard',
+    'infra_deep',
+}
 WEB_SCAN_TYPES = {'web_basic', 'web_full', 'web_wordpress', 'web_api', 'wordpress_scan'}
 
 NMAP_PROFILE_BY_SCAN_TYPE = {
     'nmap_discovery': 'discovery',
-    'nmap_full': 'full',
-    'nmap_services': 'services',
-    'nmap_full_tcp_safe': 'full_tcp_safe',
+    'nmap_full': 'infra_standard',
+    'nmap_services': 'infra_standard',
+    'nmap_full_tcp_safe': 'infra_standard',
+    'infra_discovery': 'discovery',
+    'infra_standard': 'infra_standard',
+    'infra_deep': 'infra_deep',
 }
 
 
@@ -37,6 +50,25 @@ class ScanPipelineResult:
     summary: dict[str, Any]
     command_executed: str
     engine_metadata: dict[str, Any]
+
+
+class ScanPipelineExecutionError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        command: str = '',
+        stdout: str = '',
+        stderr: str = '',
+        retryable: bool = True,
+        reason: str = 'pipeline_error',
+    ) -> None:
+        super().__init__(message)
+        self.command = command
+        self.stdout = stdout
+        self.stderr = stderr
+        self.retryable = retryable
+        self.reason = reason
 
 
 class ScanPipelineService:
@@ -56,10 +88,23 @@ class ScanPipelineService:
     def _run_infra_pipeline(self, scan: ScanExecution, scan_type: str) -> ScanPipelineResult:
         profile = NMAP_PROFILE_BY_SCAN_TYPE.get(scan_type, 'discovery')
         run_result = self.nmap_runner.run(target=scan.asset.value, profile=profile)
-        if run_result.return_code != 0:
-            raise RuntimeError(run_result.stderr or 'Nmap returned non-zero exit status')
+        parsed_output, parse_metadata = self._parse_infra_output(run_result.xml_output)
+        has_partial_data = bool(parsed_output.hosts)
+        timed_out = bool((run_result.metadata or {}).get('timed_out'))
+        if run_result.return_code != 0 and not has_partial_data:
+            timeout_message = (
+                f'Infrastructure scan timed out for profile "{profile}" '
+                f'after {(run_result.metadata or {}).get("timeout_seconds")} seconds.'
+            )
+            raise ScanPipelineExecutionError(
+                timeout_message if timed_out else (run_result.stderr or 'Nmap returned non-zero exit status'),
+                command=run_result.command,
+                stdout=run_result.stdout,
+                stderr=run_result.stderr,
+                retryable=not timed_out,
+                reason='nmap_timeout' if timed_out else 'nmap_runtime_error',
+            )
 
-        parsed_output = self.nmap_parser.parse(run_result.xml_output)
         with transaction.atomic():
             for parsed_host in parsed_output.hosts:
                 RawEvidence.objects.create(
@@ -69,7 +114,12 @@ class ScanPipelineService:
                     host=parsed_host.host,
                     payload=parsed_host.model_dump(),
                     raw_output=run_result.xml_output,
-                    metadata={'stderr': run_result.stderr, 'stdout': run_result.stdout, 'scan_type': scan_type},
+                    metadata={
+                        'stderr': run_result.stderr,
+                        'stdout': run_result.stdout,
+                        'scan_type': scan_type,
+                        'partial_result': timed_out or bool(parse_metadata.get('recovered_partial_xml')),
+                    },
                 )
                 for parsed_service in parsed_host.ports:
                     raw_version = parsed_service.version
@@ -96,6 +146,7 @@ class ScanPipelineService:
             'hosts': len(parsed_output.hosts),
             'services': scan.service_findings.count(),
             'tools': ['nmap'],
+            'partial_result': timed_out or bool(parse_metadata.get('recovered_partial_xml')),
         }
         metadata = {
             'pipeline': 'infra',
@@ -106,11 +157,40 @@ class ScanPipelineService:
                     'stderr': run_result.stderr,
                     'stdout': run_result.stdout,
                     'command': run_result.command,
+                    'parse': parse_metadata,
                     **(run_result.metadata or {}),
                 }
             },
         }
         return ScanPipelineResult(summary=summary, command_executed=run_result.command, engine_metadata=metadata)
+
+    def _parse_infra_output(self, xml_output: str) -> tuple[Any, dict[str, Any]]:
+        parse_metadata: dict[str, Any] = {'recovered_partial_xml': False}
+        if not xml_output.strip():
+            return self.nmap_parser.parse('<nmaprun></nmaprun>'), parse_metadata
+
+        try:
+            return self.nmap_parser.parse(xml_output), parse_metadata
+        except ET.ParseError:
+            recovered_xml = self._recover_partial_nmap_xml(xml_output)
+            if recovered_xml:
+                parse_metadata['recovered_partial_xml'] = True
+                return self.nmap_parser.parse(recovered_xml), parse_metadata
+            raise
+
+    def _recover_partial_nmap_xml(self, xml_output: str) -> str:
+        if '<nmaprun' not in xml_output:
+            return ''
+
+        root_match = re.search(r'<nmaprun[^>]*>', xml_output)
+        if not root_match:
+            return ''
+
+        host_blocks = re.findall(r'<host(?:\s[^>]*)?>.*?</host>', xml_output, flags=re.DOTALL)
+        if not host_blocks:
+            return ''
+
+        return f"{root_match.group(0)}{''.join(host_blocks)}</nmaprun>"
 
     def _run_web_pipeline(self, scan: ScanExecution, scan_type: str) -> ScanPipelineResult:
         target = scan.asset.value

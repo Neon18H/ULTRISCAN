@@ -46,10 +46,20 @@ class NmapRunnerTests(SimpleTestCase):
         self.assertNotIn('-p-', result.command)
 
     @patch('integrations.runners.nmap_runner.subprocess.run')
+    def test_infra_deep_uses_full_port_range(self, mocked_run):
+        mocked_run.return_value = SimpleNamespace(returncode=0, stdout='<nmaprun></nmaprun>', stderr='')
+
+        result = NmapRunner().run('10.0.0.8', 'infra_deep')
+
+        self.assertIn('-p-', result.command)
+        self.assertIn('--script default,safe', result.command)
+        self.assertEqual(result.metadata['timeout_seconds'], 900)
+
+    @patch('integrations.runners.nmap_runner.subprocess.run')
     def test_timeout_sets_metadata_and_truncation(self, mocked_run):
         mocked_run.side_effect = TimeoutExpired(
             cmd=['nmap'],
-            timeout=240,
+            timeout=120,
             output='<nmaprun>',
             stderr='',
         )
@@ -59,7 +69,7 @@ class NmapRunnerTests(SimpleTestCase):
         self.assertEqual(result.return_code, 124)
         self.assertTrue(result.metadata['timed_out'])
         self.assertTrue(result.metadata['scan_truncated'])
-        self.assertIn('timed out after 240 seconds', result.stderr)
+        self.assertIn('timed out after 120 seconds', result.stderr)
 
     def test_rejects_invalid_target(self):
         with self.assertRaises(ValueError):
