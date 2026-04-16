@@ -27,28 +27,53 @@ class NmapRunResult:
 
 class NmapRunner:
     base_binary = 'nmap'
-    timeout_seconds = 240
 
-    PROFILE_ARGS = {
-        'discovery': ['-sT', '-Pn', '-n', '--unprivileged'],
-        'full_tcp_safe': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--top-ports', '1000'],
-        'full': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '-p-', '--script', 'default,vuln'],
-        'services': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--script', 'banner,http-title,ssl-cert,vuln'],
+    PROFILE_CONFIG = {
+        # Perfil rápido para detección de puertos abiertos y superficie inicial.
+        'discovery': {
+            'args': ['-sT', '-Pn', '-n', '--unprivileged', '--top-ports', '1000'],
+            'timeout_seconds': 120,
+        },
+        # Perfil equilibrado para contenedores/entornos no privilegiados.
+        'infra_standard': {
+            'args': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--top-ports', '1000'],
+            'timeout_seconds': 300,
+        },
+        # Perfil profundo opcional: más puertos/scripts y mayor timeout.
+        'infra_deep': {
+            'args': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '-p-', '--script', 'default,safe'],
+            'timeout_seconds': 900,
+        },
+        # Alias legacy.
+        'full_tcp_safe': {
+            'args': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--top-ports', '1000'],
+            'timeout_seconds': 300,
+        },
+        'full': {
+            'args': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '-p-', '--script', 'default,safe'],
+            'timeout_seconds': 900,
+        },
+        'services': {
+            'args': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--top-ports', '1000', '--script', 'banner,http-title,ssl-cert'],
+            'timeout_seconds': 300,
+        },
     }
 
-    FALLBACK_PROFILE_ARGS = {
-        'discovery': ['-sT', '-Pn', '-n', '--unprivileged'],
-        'full_tcp_safe': ['-sT', '-sV', '-Pn', '-n', '--unprivileged'],
-        'full': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '-p-', '--script', 'default,vuln'],
-        'services': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--script', 'banner,http-title,ssl-cert,vuln'],
-    }
+    FALLBACK_PROFILE_ARGS = {profile: config['args'][:] for profile, config in PROFILE_CONFIG.items()}
 
     def run(self, target: str, profile: str) -> NmapRunResult:
         self._validate_target(target)
-        if profile not in self.PROFILE_ARGS:
+        profile_config = self.PROFILE_CONFIG.get(profile)
+        if not profile_config:
             raise ValueError(f'Perfil de escaneo no soportado por runner nmap: {profile}')
 
-        primary_result = self._run_command(target=target, args=self.PROFILE_ARGS[profile], profile=profile, mode='primary')
+        primary_result = self._run_command(
+            target=target,
+            args=profile_config['args'],
+            profile=profile,
+            timeout_seconds=profile_config['timeout_seconds'],
+            mode='primary',
+        )
 
         if primary_result.return_code == 0:
             return primary_result
@@ -60,7 +85,13 @@ class NmapRunner:
         if not fallback_args:
             return primary_result
 
-        fallback_result = self._run_command(target=target, args=fallback_args, profile=profile, mode='fallback_unprivileged')
+        fallback_result = self._run_command(
+            target=target,
+            args=fallback_args,
+            profile=profile,
+            timeout_seconds=profile_config['timeout_seconds'],
+            mode='fallback_unprivileged',
+        )
         fallback_result.metadata['fallback_used'] = True
         fallback_result.metadata['fallback_reason'] = 'raw_socket_or_privilege_error'
         fallback_result.metadata['initial_command'] = primary_result.command
@@ -78,7 +109,7 @@ class NmapRunner:
         )
         return fallback_result
 
-    def _run_command(self, target: str, args: list[str], profile: str, mode: str) -> NmapRunResult:
+    def _run_command(self, target: str, args: list[str], profile: str, timeout_seconds: int, mode: str) -> NmapRunResult:
         cmd = [self.base_binary, '-oX', '-', *args, target]
         timed_out = False
         scan_truncated = False
@@ -87,7 +118,7 @@ class NmapRunner:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout_seconds,
+                timeout=timeout_seconds,
                 check=False,
             )
             return_code = completed.returncode
@@ -99,7 +130,7 @@ class NmapRunner:
             return_code = 124
             stdout = exc.stdout or ''
             stderr = (
-                f'Nmap scan timed out after {self.timeout_seconds} seconds '
+                f'Nmap scan timed out after {timeout_seconds} seconds '
                 f'and output may be truncated.'
             )
 
@@ -112,7 +143,7 @@ class NmapRunner:
             metadata={
                 'profile': profile,
                 'target': target,
-                'timeout_seconds': self.timeout_seconds,
+                'timeout_seconds': timeout_seconds,
                 'mode': mode,
                 'fallback_used': False,
                 'timed_out': timed_out,
