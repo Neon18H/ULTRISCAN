@@ -29,9 +29,10 @@ class Command(BaseCommand):
         profiles = [
             ('discovery', 'Descubrimiento inicial seguro de host/servicios'),
             ('full_tcp_safe', 'Escaneo TCP defensivo sobre top 1000 puertos con detección de versiones'),
-            ('web_basic', 'Orquesta fingerprinting web básico en puertos HTTP/HTTPS'),
-            ('wordpress', 'Prepara orquestación WordPress cuando se detecta tecnología'),
+            ('web_basic', 'Pipeline web base de fingerprinting + enumeración + vulnerabilidades'),
+            ('wordpress', 'Pipeline especializado para WordPress cuando se detecta CMS'),
             ('misconfiguration', 'Escaneo orientado a señales de mala configuración'),
+            ('infra_services', 'Nmap servicios + NSE scripts para detección avanzada'),
         ]
         for org in Organization.objects.all():
             for name, description in profiles:
@@ -161,6 +162,6 @@ class Command(BaseCommand):
             'port_detection': True,
             'version_detection': True,
             'web_detection': name in {'web_basic', 'wordpress', 'misconfiguration'},
-            'light_enumeration': name in {'full_tcp_safe', 'misconfiguration'},
+            'light_enumeration': name in {'full_tcp_safe', 'misconfiguration', 'infra_services'},
             'wordpress_scan': name == 'wordpress',
         }

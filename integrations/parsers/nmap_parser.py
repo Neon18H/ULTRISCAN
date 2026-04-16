@@ -59,7 +59,7 @@ class ParsedNmapOutput:
 
 
 class NmapXmlParser:
-    SAFE_SCRIPT_PREFIXES = ('http-', 'ssl-', 'ftp-', 'banner', 'ssh-')
+    SAFE_SCRIPT_PREFIXES = ('http-', 'ssl-', 'ftp-', 'banner', 'ssh-', 'vuln', 'smb-', 'mysql-', 'rdp-')
 
     def parse(self, xml_content: str) -> ParsedNmapOutput:
         root = ET.fromstring(xml_content)
@@ -85,13 +85,9 @@ class NmapXmlParser:
 
                 for script_node in port_node.findall('script'):
                     script_id = script_node.attrib.get('id', '')
-                    if script_id and script_id.startswith(self.SAFE_SCRIPT_PREFIXES):
-                        scripts.append(
-                            ParsedPortScript(
-                                script_id=script_id,
-                                output=script_node.attrib.get('output', ''),
-                            )
-                        )
+                    output = script_node.attrib.get('output', '')
+                    if script_id and (script_id.startswith(self.SAFE_SCRIPT_PREFIXES) or script_id == 'vulners'):
+                        scripts.append(ParsedPortScript(script_id=script_id, output=output))
 
                 extrainfo = service_node.attrib.get('extrainfo', '') if service_node is not None else ''
                 tunnel = service_node.attrib.get('tunnel', '') if service_node is not None else ''
