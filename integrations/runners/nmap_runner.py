@@ -32,11 +32,15 @@ class NmapRunner:
     PROFILE_ARGS = {
         'discovery': ['-sT', '-Pn', '-n', '--unprivileged'],
         'full_tcp_safe': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--top-ports', '1000'],
+        'full': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '-p-', '--script', 'default,vuln'],
+        'services': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--script', 'banner,http-title,ssl-cert,vuln'],
     }
 
     FALLBACK_PROFILE_ARGS = {
         'discovery': ['-sT', '-Pn', '-n', '--unprivileged'],
         'full_tcp_safe': ['-sT', '-sV', '-Pn', '-n', '--unprivileged'],
+        'full': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '-p-', '--script', 'default,vuln'],
+        'services': ['-sT', '-sV', '-Pn', '-n', '--unprivileged', '--script', 'banner,http-title,ssl-cert,vuln'],
     }
 
     def run(self, target: str, profile: str) -> NmapRunResult:

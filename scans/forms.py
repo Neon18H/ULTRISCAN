@@ -6,32 +6,35 @@ from scan_profiles.models import ScanProfile
 
 SCAN_TYPE_CHOICES = [
     ('nmap_discovery', 'Nmap Discovery'),
-    ('nmap_full_tcp_safe', 'Nmap Full TCP Safe'),
+    ('nmap_full', 'Nmap Full'),
+    ('nmap_services', 'Nmap Services + NSE'),
     ('web_basic', 'Web Basic'),
-    ('gobuster_directory', 'Gobuster Directory Scan'),
-    ('wordpress_scan', 'WordPress Scan'),
-    ('misconfiguration_scan', 'Misconfiguration Scan'),
+    ('web_full', 'Web Full'),
+    ('web_wordpress', 'Web WordPress'),
+    ('web_api', 'Web API'),
 ]
 
 SCAN_TYPE_HELP = {
     'nmap_discovery': 'Descubrimiento rápido de hosts y puertos más comunes.',
-    'nmap_full_tcp_safe': 'Escaneo TCP seguro de los 1000 puertos más comunes con detección de versiones.',
-    'web_basic': 'Fingerprinting de servicios web y superficie HTTP/HTTPS.',
-    'gobuster_directory': 'Enumeración de directorios y rutas web (pendiente de motor dedicado).',
-    'wordpress_scan': 'Detección de instalación WordPress y chequeos básicos.',
-    'misconfiguration_scan': 'Búsqueda de señales de mala configuración expuesta.',
+    'nmap_full': 'Escaneo completo TCP con detección de versiones y scripts NSE básicos.',
+    'nmap_services': 'Escaneo de servicios con énfasis en detección real de versiones y scripts NSE.',
+    'web_basic': 'Pipeline web base: fingerprint, enumeración y vulnerabilidades.',
+    'web_full': 'Pipeline web extendido con mayor enumeración para aplicaciones completas.',
+    'web_wordpress': 'Pipeline web con detección CMS y ejecución WordPress dedicada.',
+    'web_api': 'Pipeline orientado a superficie API y endpoints dinámicos.',
 }
 
 SCAN_TYPE_TO_PROFILE = {
     'nmap_discovery': 'discovery',
-    'nmap_full_tcp_safe': 'full_tcp_safe',
+    'nmap_full': 'full_tcp_safe',
+    'nmap_services': 'full_tcp_safe',
     'web_basic': 'web_basic',
-    'gobuster_directory': 'web_basic',
-    'wordpress_scan': 'wordpress',
-    'misconfiguration_scan': 'misconfiguration',
+    'web_full': 'web_basic',
+    'web_wordpress': 'wordpress',
+    'web_api': 'web_basic',
 }
 
-WEB_ONLY_SCAN_TYPES = {'web_basic', 'gobuster_directory', 'wordpress_scan'}
+WEB_ONLY_SCAN_TYPES = {'web_basic', 'web_full', 'web_wordpress', 'web_api'}
 
 
 class CreateScanForm(forms.Form):
@@ -91,10 +94,11 @@ class CreateScanForm(forms.Form):
             return module
         defaults = {
             'nmap_discovery': 'nmap',
-            'nmap_full_tcp_safe': 'nmap',
-            'web_basic': 'nmap-web',
-            'gobuster_directory': 'gobuster',
-            'wordpress_scan': 'wordpress',
-            'misconfiguration_scan': 'nmap-policy',
+            'nmap_full': 'nmap',
+            'nmap_services': 'nmap+nse',
+            'web_basic': 'whatweb+nuclei',
+            'web_full': 'whatweb+ffuf+nuclei+nikto',
+            'web_wordpress': 'whatweb+nuclei+wpscan',
+            'web_api': 'whatweb+ffuf+nuclei',
         }
         return defaults.get(scan_type, 'nmap')

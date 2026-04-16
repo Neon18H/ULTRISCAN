@@ -10,31 +10,33 @@
 
 <div class="row g-3 mb-3">
   <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Tipo</div><div class="fw-semibold">{{ object.engine_metadata.requested_scan_type|default:'nmap_discovery' }}</div></div></div></div>
-  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Módulo</div><div class="fw-semibold">{{ object.engine_metadata.requested_module|default:'nmap' }}</div></div></div></div>
+  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Pipeline</div><div class="fw-semibold">{{ object.engine_metadata.pipeline|default:'infra' }}</div></div></div></div>
   <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Duración</div><div class="fw-semibold">{{ object.duration_seconds }}s</div></div></div></div>
   <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Fecha</div><div class="fw-semibold">{{ object.created_at|date:'Y-m-d H:i' }}</div></div></div></div>
 </div>
 
 <div class="card metric-card mb-3">
   <div class="card-body">
-    <h5 class="mb-2">Metadata</h5>
+    <h5 class="mb-2">Metadata de ejecución</h5>
+    <div><strong>Tools:</strong> {{ object.summary.tools|default:'nmap' }}</div>
     <div><strong>Command:</strong> <code>{{ object.command_executed|default:'N/A' }}</code></div>
-    <div><strong>Options:</strong> {{ object.engine_metadata.requested_options|default:'-' }}</div>
-    <div><strong>Fallback unprivileged:</strong> {% if object.engine_metadata.runner_metadata.fallback_used %}Sí{% else %}No{% endif %}</div>
-    {% if object.engine_metadata.runner_metadata.initial_command %}
-      <div><strong>Comando inicial:</strong> <code>{{ object.engine_metadata.runner_metadata.initial_command }}</code></div>
-    {% endif %}
     {% if object.error_message %}<div class="alert alert-danger mt-3 mb-2">{{ object.error_message }}</div>{% endif %}
-    {% if object.engine_metadata.runner_metadata.stderr %}
-      <div class="small text-muted mt-2"><strong>stderr:</strong></div>
-      <pre class="bg-light p-2 border rounded small">{{ object.engine_metadata.runner_metadata.stderr }}</pre>
-    {% endif %}
-    {% if object.engine_metadata.runner_metadata.stdout %}
-      <div class="small text-muted mt-2"><strong>stdout:</strong></div>
-      <pre class="bg-light p-2 border rounded small">{{ object.engine_metadata.runner_metadata.stdout|truncatechars:1200 }}</pre>
-    {% endif %}
   </div>
 </div>
+
+{% if object.engine_metadata.structured_results %}
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h5 class="mb-3">Resultados estructurados web</h5>
+    <div class="row g-3">
+      <div class="col-md-3"><div class="small text-muted">CMS</div><div class="fw-semibold">{{ object.engine_metadata.structured_results.cms|default:'-' }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Tecnologías</div><div class="fw-semibold">{{ object.summary.technologies_count|default:0 }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Endpoints</div><div class="fw-semibold">{{ object.summary.endpoints_count|default:0 }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Vulnerabilidades</div><div class="fw-semibold">{{ object.summary.vulnerabilities_count|default:0 }}</div></div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <div class="card metric-card mb-3">
   <div class="card-body">
@@ -48,7 +50,7 @@
             <td>{{ service.host }}</td>
             <td>{{ service.port }}/{{ service.protocol }}</td>
             <td>{{ service.service|default:'-' }}</td>
-            <td>{{ service.product|default:'-' }}<br><small class='text-muted'>Raw: {{ service.raw_version|default:service.version|default:'-' }}</small>{% if service.normalized_version %}<br><small class='text-muted'>Normalized: {{ service.normalized_version }}</small>{% endif %}</td>
+            <td>{{ service.product|default:'-' }}</td>
             <td>{{ service.state }}</td>
           </tr>
           {% empty %}
@@ -57,6 +59,22 @@
         </tbody>
       </table>
     </div>
+  </div>
+</div>
+
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h5 class="mb-3">Resultados por módulo</h5>
+    <ul class="list-group list-group-flush">
+      {% for module, result in object.engine_metadata.modules.items %}
+      <li class="list-group-item px-0">
+        <div class="fw-semibold">{{ module }}</div>
+        <div class="small text-muted">rc={{ result.return_code }}{% if result.missing_binary %} · binary missing{% endif %}</div>
+      </li>
+      {% empty %}
+      <li class="list-group-item px-0 text-muted">No hay módulos registrados.</li>
+      {% endfor %}
+    </ul>
   </div>
 </div>
 

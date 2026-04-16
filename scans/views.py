@@ -121,5 +121,5 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             super()
             .get_queryset()
             .select_related('asset', 'profile', 'launched_by')
-            .prefetch_related('service_findings', 'raw_evidences', 'findings')
+            .prefetch_related('service_findings', 'web_findings', 'raw_evidences', 'findings')
         )
