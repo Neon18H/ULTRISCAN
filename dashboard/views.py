@@ -811,10 +811,10 @@ class ExploitListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
 
     def get_queryset(self):
         queryset = (
-            Exploit.objects.annotate(
+            Exploit.objects.prefetch_related(Prefetch('cve_links', queryset=CVEExploit.objects.select_related('cve'))).annotate(
                 cve_links_count=Count('cve_links', distinct=True),
             )
-            .order_by('-created_at', '-exploit_id')
+            .order_by('-published_at', '-created_at', '-exploit_id')
         )
         return self.apply_filters(queryset)
 
@@ -830,7 +830,7 @@ class ExploitListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
 
         exploit_type = params.get('type', '').strip()
         if exploit_type:
-            queryset = queryset.filter(type__icontains=exploit_type)
+            queryset = queryset.filter(Q(exploit_type__icontains=exploit_type) | Q(type__icontains=exploit_type))
 
         correlation = params.get('correlation', '').strip().lower()
         if correlation in {'correlated', 'true', '1'}:
@@ -858,7 +858,7 @@ class ExploitListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
             queryset = queryset.filter(
                 Q(title__icontains=query) |
                 Q(file_path__icontains=query) |
-                Q(cve__icontains=query)
+                Q(cve__icontains=query) | Q(cve_ids__icontains=query)
             )
 
         return queryset.distinct()
@@ -913,8 +913,8 @@ class ExploitListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
         context['type_distribution'] = safe_query(
             [],
             lambda: list(
-                Exploit.objects.exclude(type='')
-                .values('type')
+                Exploit.objects.exclude(exploit_type='')
+                .values('exploit_type')
                 .annotate(total=Count('id'))
                 .order_by('-total')[:8]
             ),
@@ -945,6 +945,17 @@ class ExploitListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
         findings_count_map = self._build_exploit_findings_count_map(org)
         for item in context['object_list']:
             item.findings_related_total = findings_count_map.get(item.id, 0)
+            linked_cves = sorted({link.cve.cve_id for link in item.cve_links.all() if link.cve_id})
+            if linked_cves:
+                item.cve_display = ', '.join(linked_cves[:3])
+                if len(linked_cves) > 3:
+                    item.cve_display += f' (+{len(linked_cves) - 3})'
+            elif item.cve:
+                item.cve_display = item.cve
+            elif item.cve_ids:
+                item.cve_display = ', '.join(item.cve_ids[:3])
+            else:
+                item.cve_display = ''
         context['active_filter_chips'] = self.get_active_filter_chips()
         context['result_count'] = self.object_list.count()
         context['current_querystring'] = self.get_querystring_without_page()
@@ -966,6 +977,9 @@ class ExploitListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
             if cve_id:
                 cve_bucket.setdefault(row['exploit_id'], set()).add(cve_id)
         for item in exploits:
+            for item_cve in (item.cve_ids or []):
+                if item_cve:
+                    cve_bucket.setdefault(item.id, set()).add(item_cve.strip().upper())
             if item.cve:
                 cve_bucket.setdefault(item.id, set()).add(item.cve.strip().upper())
 
@@ -1034,6 +1048,8 @@ class ExploitDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailView):
         context = super().get_context_data(**kwargs)
         cve_links = list(self.object.cve_links.select_related('cve').all())
         cve_ids = [link.cve.cve_id for link in cve_links]
+        if not cve_ids and self.object.cve_ids:
+            cve_ids = [cve.strip().upper() for cve in self.object.cve_ids if cve]
         org = get_active_organization(self.request.user)
         findings = safe_query(
             [],
