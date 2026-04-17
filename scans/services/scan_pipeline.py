@@ -18,6 +18,7 @@ from integrations.runners.nmap_runner import NmapRunner
 from scans.engines.tooling import ExternalToolRunner, ToolExecutionResult
 from scans.models import RawEvidence, ScanExecution, ServiceFinding, WebFinding
 from scans.parsers.web_parsers import (
+    parse_katana_output,
     parse_ffuf_output,
     parse_gobuster_json,
     parse_nikto_text,
@@ -38,7 +39,11 @@ INFRA_SCAN_TYPES = {
     'infra_standard',
     'infra_deep',
 }
-WEB_SCAN_TYPES = {'web_basic', 'web_full', 'web_wordpress', 'web_api', 'wordpress_scan'}
+WEB_SCAN_TYPES = {'web_basic', 'web_full', 'web_wordpress', 'web_api', 'web_appsec', 'wordpress_scan'}
+
+SENSITIVE_ENDPOINT_TOKENS = (
+    'admin', 'login', 'signin', 'dashboard', 'auth', 'oauth', 'api', 'graphql', 'internal', 'debug', 'backup', 'config',
+)
 
 NMAP_PROFILE_BY_SCAN_TYPE = {
     'nmap_discovery': 'discovery',
@@ -329,6 +334,7 @@ class ScanPipelineService:
             'gobuster': self.external_runner.is_available('gobuster'),
             'ffuf': self.external_runner.is_available('ffuf'),
             'nikto': self.external_runner.is_available('nikto'),
+            'katana': self.external_runner.is_available('katana'),
             'wpscan': self.external_runner.is_available('wpscan'),
         }
         dependency_checks = {
@@ -336,6 +342,7 @@ class ScanPipelineService:
             'nuclei': {'available': tool_presence['nuclei'], 'required': scan_type == 'web_full'},
             'gobuster': {'available': tool_presence['gobuster'], 'required': False},
             'ffuf': {'available': tool_presence['ffuf'], 'required': False},
+            'katana': {'available': tool_presence['katana'], 'required': scan_type in {'web_full', 'web_appsec'}},
             'gobuster_or_ffuf': {
                 'available': tool_presence['gobuster'] or tool_presence['ffuf'],
                 'required': True,
@@ -516,6 +523,31 @@ class ScanPipelineService:
                 tools_skipped.append({'tool': enum_tool, 'reason': 'missing_wordlist', 'required': False})
                 endpoints_by_status = {}
 
+        if scan_type in {'web_full', 'web_appsec'}:
+            katana_res = self.run_katana(target)
+            if _record_module('katana', katana_res, required=scan_type == 'web_appsec'):
+                katana_endpoints = parse_katana_output(katana_res.stdout)
+                if katana_endpoints:
+                    endpoints.extend(katana_endpoints)
+                    endpoints = self._enrich_endpoint_priority(endpoints)
+                    endpoints = self._dedupe_endpoints(target, endpoints)
+                    endpoints_by_source = self._count_endpoints_by_source(endpoints)
+                    endpoints_by_status = self._count_endpoints_by_status(endpoints)
+                    RawEvidence.objects.create(
+                        organization=scan.organization,
+                        scan_execution=scan,
+                        source='katana',
+                        host=target,
+                        payload={'endpoints': katana_endpoints},
+                        raw_output=katana_res.stdout,
+                        metadata={
+                            'stderr': katana_res.stderr,
+                            'stdout_excerpt': self._summarize_output(katana_res.stdout, 400),
+                            'command': katana_res.command,
+                            'scan_type': scan_type,
+                        },
+                    )
+
         interpreted_headers = self._interpret_headers(headers)
 
         # 3) Vulnerabilidades
@@ -531,7 +563,7 @@ class ScanPipelineService:
                 f'No nuclei templates found in: {", ".join(self._nuclei_template_candidates())}',
             )
         else:
-            nuclei_res = self.run_nuclei(target, nuclei_templates)
+            nuclei_res = self.run_nuclei(target, nuclei_templates, scan_type=scan_type)
         if _record_module('nuclei', nuclei_res, required=nuclei_required):
             vulnerabilities.extend(parse_nuclei_json(nuclei_res.stdout))
             RawEvidence.objects.create(
@@ -597,6 +629,20 @@ class ScanPipelineService:
 
         vulnerabilities = self._dedupe_vulnerabilities(vulnerabilities)
         vulnerabilities_by_severity = self._count_vulnerabilities_by_severity(vulnerabilities)
+        headers_analysis = self._group_interpreted_headers(interpreted_headers)
+        web_basic_findings = self._build_basic_web_findings(endpoints=endpoints, headers_analysis=headers_analysis)
+        redirects = self._extract_redirects(fingerprint, endpoints)
+        web_enterprise_findings = self._build_enterprise_web_findings(
+            target=target,
+            headers=headers,
+            interpreted_headers=interpreted_headers,
+            endpoints=endpoints,
+            technologies=technologies,
+            redirects=redirects,
+            whatweb_signals=whatweb_signals,
+            cms=cms,
+        )
+        web_findings_all = self._merge_web_findings(web_enterprise_findings, web_basic_findings)
 
         if not tools_executed:
             warnings.append('No hubo herramientas externas exitosas; se devuelve resultado parcial usando HTTP probe/headers.')
@@ -679,9 +725,25 @@ class ScanPipelineService:
                     metadata={'module': 'http_headers', **header_finding},
                 )
 
-        headers_analysis = self._group_interpreted_headers(interpreted_headers)
-        web_basic_findings = self._build_basic_web_findings(endpoints=endpoints, headers_analysis=headers_analysis)
-        redirects = self._extract_redirects(fingerprint, endpoints)
+            for web_finding in web_enterprise_findings:
+                sev = str(web_finding.get('severity') or Finding.Severity.LOW).lower()
+                if sev not in dict(Finding.Severity.choices):
+                    sev = Finding.Severity.LOW
+                Finding.objects.get_or_create(
+                    organization=scan.organization,
+                    scan_execution=scan,
+                    asset=scan.asset,
+                    title=web_finding.get('title') or 'Web hardening finding',
+                    defaults={
+                        'description': web_finding.get('description', ''),
+                        'remediation': web_finding.get('remediation', 'Aplicar hardening web según mejores prácticas.'),
+                        'reference': ', '.join(web_finding.get('references') or [])[:500],
+                        'severity': sev,
+                        'confidence': Finding.Confidence.MEDIUM,
+                        'status': Finding.Status.OPEN,
+                    },
+                )
+
         endpoints_by_status = self._count_endpoints_by_status(endpoints)
         module_status = self._build_module_status(modules)
         web_kpis = self._build_web_kpis(
@@ -689,8 +751,9 @@ class ScanPipelineService:
             endpoints=endpoints,
             vulnerabilities=vulnerabilities,
             headers_analysis=headers_analysis,
-            web_basic_findings=web_basic_findings,
+            web_basic_findings=web_findings_all,
             redirects=redirects,
+            module_status=module_status,
         )
 
         summary = {
@@ -748,6 +811,8 @@ class ScanPipelineService:
                 'technologies': sorted(technologies),
                 'endpoints': endpoints,
                 'web_findings_basic': web_basic_findings,
+                'web_findings': web_findings_all,
+                'web_findings_enterprise': web_enterprise_findings,
                 'web_kpis': web_kpis,
                 'vulnerabilities': vulnerabilities,
                 'headers': headers,
@@ -877,7 +942,33 @@ class ScanPipelineService:
             ],
         )
 
-    def run_nuclei(self, target: str, templates_path: Path):
+    def run_katana(self, target: str):
+        return self.external_runner.run(
+            'katana',
+            [
+                '-u',
+                target,
+                '-jsonl',
+                '-silent',
+                '-d',
+                os.environ.get('KATANA_DEPTH', '2'),
+                '-c',
+                os.environ.get('KATANA_CONCURRENCY', '2'),
+                '-rl',
+                os.environ.get('KATANA_RATE_LIMIT', '4'),
+                '-timeout',
+                os.environ.get('KATANA_TIMEOUT', '8'),
+            ],
+            timeout=int(os.environ.get('KATANA_TOOL_TIMEOUT', '120')),
+        )
+
+    def run_nuclei(self, target: str, templates_path: Path, *, scan_type: str = 'web_basic'):
+        profile_tags = {
+            'web_basic': 'misconfig,exposure',
+            'web_full': 'misconfig,exposure,cves',
+            'web_appsec': 'xss,sqli,lfi,rce,misconfig,exposure',
+            'web_api': 'api,misconfig,exposure',
+        }
         return self.external_runner.run(
             'nuclei',
             [
@@ -889,9 +980,9 @@ class ScanPipelineService:
                 '-c',
                 os.environ.get('NUCLEI_CONCURRENCY', '1'),
                 '-rl',
-                os.environ.get('NUCLEI_RATE_LIMIT', '3'),
+                os.environ.get('NUCLEI_RATE_LIMIT', '2'),
                 '-bs',
-                os.environ.get('NUCLEI_BULK_SIZE', '4'),
+                os.environ.get('NUCLEI_BULK_SIZE', '2'),
                 '-timeout',
                 os.environ.get('NUCLEI_TIMEOUT', '6'),
                 '-retries',
@@ -901,6 +992,9 @@ class ScanPipelineService:
                 '-headless-bulk-size',
                 os.environ.get('NUCLEI_HEADLESS_BULK_SIZE', '1'),
                 '-project',
+                '-disable-update-check',
+                '-tags',
+                os.environ.get('NUCLEI_PROFILE_TAGS', profile_tags.get(scan_type, 'misconfig,exposure')),
                 '-t',
                 str(templates_path),
             ],
@@ -1119,7 +1213,7 @@ class ScanPipelineService:
         }
 
     def _count_endpoints_by_source(self, endpoints: list[dict[str, Any]]) -> dict[str, int]:
-        totals: dict[str, int] = {'gobuster': 0, 'ffuf': 0}
+        totals: dict[str, int] = {'gobuster': 0, 'ffuf': 0, 'katana': 0}
         for endpoint in endpoints:
             source = str(endpoint.get('source') or 'unknown').lower()
             totals[source] = totals.get(source, 0) + 1
@@ -1272,17 +1366,64 @@ class ScanPipelineService:
         headers_analysis: dict[str, Any],
         web_basic_findings: list[dict[str, Any]],
         redirects: list[dict[str, Any]],
+        module_status: dict[str, int],
     ) -> dict[str, Any]:
         vulnerabilities_by_severity = self._count_vulnerabilities_by_severity(vulnerabilities)
+        controls_present = len(headers_analysis.get('present') or [])
+        controls_absent = len(headers_analysis.get('absent') or [])
+        exposure_observed = len(headers_analysis.get('exposure') or [])
+        total_controls = max(controls_present + controls_absent + exposure_observed, 1)
+        score = int((controls_present / total_controls) * 100)
         return {
             'technologies_detected': len(technologies),
             'endpoints_discovered': len(endpoints),
             'vulnerabilities_detected': len(vulnerabilities),
             'web_basic_findings': len(web_basic_findings),
-            'controls_present': len(headers_analysis.get('present') or []),
-            'controls_absent': len(headers_analysis.get('absent') or []),
+            'controls_present': controls_present,
+            'controls_absent': controls_absent,
+            'exposure_observed': exposure_observed,
             'redirects_detected': len(redirects),
             'severity_aggregate': vulnerabilities_by_severity,
+            'score': score,
+            'module_status': module_status,
+            'kpi_blocks': [
+                {
+                    'key': 'controls_present',
+                    'label': 'Controles presentes',
+                    'value': controls_present,
+                    'context': 'Headers de hardening detectados y activos.',
+                },
+                {
+                    'key': 'controls_absent',
+                    'label': 'Controles ausentes',
+                    'value': controls_absent,
+                    'context': 'Controles esperados sin evidencia en la respuesta.',
+                },
+                {
+                    'key': 'exposure_observed',
+                    'label': 'Exposición tecnológica',
+                    'value': exposure_observed,
+                    'context': 'Headers/banners que facilitan fingerprinting.',
+                },
+                {
+                    'key': 'endpoints_discovered',
+                    'label': 'Endpoints descubiertos',
+                    'value': len(endpoints),
+                    'context': 'Superficie observable vía enumeración/crawling.',
+                },
+                {
+                    'key': 'technologies_detected',
+                    'label': 'Tecnologías detectadas',
+                    'value': len(technologies),
+                    'context': 'Stack deducido por fingerprint y señales de respuesta.',
+                },
+                {
+                    'key': 'web_basic_findings',
+                    'label': 'Hallazgos web',
+                    'value': len(web_basic_findings),
+                    'context': 'Misconfiguraciones y superficies de riesgo detectadas.',
+                },
+            ],
         }
 
     def _build_basic_web_findings(self, *, endpoints: list[dict[str, Any]], headers_analysis: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1303,4 +1444,143 @@ class ScanPipelineService:
                 continue
             seen.add(key)
             findings.append({'title': f"Header faltante: {header_name}", 'severity': 'medium', 'evidence': header.get('message')})
+        return findings
+
+    def _merge_web_findings(self, primary: list[dict[str, Any]], fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in [*(primary or []), *(fallback or [])]:
+            title = str(item.get('title') or '').strip()
+            evidence = str(item.get('evidence') or '').strip()
+            key = (title.lower(), evidence.lower())
+            if not title or key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+        return merged
+
+    def _build_enterprise_web_findings(
+        self,
+        *,
+        target: str,
+        headers: dict[str, str],
+        interpreted_headers: list[dict[str, Any]],
+        endpoints: list[dict[str, Any]],
+        technologies: set[str],
+        redirects: list[dict[str, Any]],
+        whatweb_signals: list[str],
+        cms: str,
+    ) -> list[dict[str, Any]]:
+        findings: list[dict[str, Any]] = []
+        headers_lc = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+        header_lookup = {row.get('header'): row for row in interpreted_headers if isinstance(row, dict)}
+
+        def _add(
+            title: str,
+            severity: str,
+            description: str,
+            evidence: str,
+            remediation: str,
+            references: list[str] | None = None,
+        ) -> None:
+            findings.append(
+                {
+                    'title': title,
+                    'severity': severity,
+                    'description': description,
+                    'evidence': evidence,
+                    'remediation': remediation,
+                    'references': references or [],
+                }
+            )
+
+        if header_lookup.get('strict-transport-security', {}).get('status') == 'WARNING':
+            _add(
+                'HSTS ausente',
+                'medium',
+                'El sitio no anuncia Strict-Transport-Security y permite downgrade o navegación HTTP residual.',
+                'Header strict-transport-security no presente en respuesta HTTP.',
+                'Configurar HSTS con max-age robusto e incluir includeSubDomains/preload donde aplique.',
+                ['https://owasp.org/www-project-secure-headers/'],
+            )
+        if header_lookup.get('content-security-policy', {}).get('status') == 'WARNING':
+            _add(
+                'CSP ausente',
+                'medium',
+                'No existe Content-Security-Policy explícita; se reduce capacidad de mitigar XSS y carga de contenido no confiable.',
+                'Header content-security-policy no encontrado.',
+                'Definir una política CSP inicial en modo report-only y evolucionar a enforcement.',
+                ['https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html'],
+            )
+        if header_lookup.get('server', {}).get('status') == 'WARNING':
+            _add(
+                'Exposición de header Server',
+                'low',
+                'El banner Server revela tecnología del servidor y facilita fingerprinting atacante.',
+                f"Server: {headers_lc.get('server', 'valor no capturado')}",
+                'Reducir/anonimizar banner Server mediante hardening de reverse proxy o web server.',
+            )
+        if header_lookup.get('x-powered-by', {}).get('status') == 'WARNING':
+            _add(
+                'Exposición de framework vía X-Powered-By',
+                'low',
+                'El header X-Powered-By filtra framework o runtime de backend.',
+                f"X-Powered-By: {headers_lc.get('x-powered-by', 'valor no capturado')}",
+                'Deshabilitar X-Powered-By en servidor de aplicaciones o middleware de salida.',
+            )
+
+        sensitive = [ep for ep in endpoints if any(token in str(ep.get('path', '')).lower() for token in SENSITIVE_ENDPOINT_TOKENS)]
+        for endpoint in sensitive[:6]:
+            status = endpoint.get('status_code') or 'n/a'
+            sev = 'medium' if status in {200, 401} else 'low'
+            _add(
+                'Superficie sensible descubierta',
+                sev,
+                'Se detectó endpoint asociado a administración/autenticación/API que incrementa superficie de ataque.',
+                f"{endpoint.get('path')} [{status}] vía {endpoint.get('source', 'enumeration')}",
+                'Restringir acceso con segmentación, MFA, allowlist y controles de rate-limit.',
+            )
+
+        if redirects:
+            redirect_samples = ', '.join([f"{r.get('from', '/') or '/'} -> {r.get('to', '')}" for r in redirects[:3]])
+            _add(
+                'Redirecciones observables',
+                'info',
+                'Se observaron redirecciones que pueden revelar lógica interna de routing o zonas administrativas.',
+                redirect_samples,
+                'Validar que las redirecciones no expongan paths internos y evitar open redirect.',
+            )
+
+        insecure_cookies = []
+        for cookie in str(headers_lc.get('set-cookie') or '').split(','):
+            ck = cookie.strip().lower()
+            if ck and ('secure' not in ck or 'httponly' not in ck):
+                insecure_cookies.append(cookie.strip())
+        if insecure_cookies:
+            _add(
+                'Cookies sin flags de seguridad completas',
+                'medium',
+                'Se detectaron cookies sin combinación robusta de flags Secure/HttpOnly/SameSite.',
+                '; '.join(insecure_cookies[:3]),
+                'Agregar flags Secure, HttpOnly y SameSite apropiadas para cookies de sesión.',
+                ['https://owasp.org/www-community/controls/SecureCookieAttribute'],
+            )
+
+        if technologies:
+            _add(
+                'Exposición de tecnologías/frameworks',
+                'low',
+                'Fingerprinting identificó componentes del stack web visibles externamente.',
+                ', '.join(sorted(technologies)[:10]),
+                'Minimizar información de versión/banner y reforzar ciclo de parcheo de stack detectado.',
+            )
+        if cms:
+            _add(
+                'Superficie CMS detectada',
+                'info',
+                'Se identificó CMS en la superficie web; requiere hardening específico y monitoreo de plugins/temas.',
+                f'CMS detectado: {cms}. Señales: {", ".join(whatweb_signals[:5])}',
+                'Aplicar baseline de hardening del CMS y validar inventario/versionado de extensiones.',
+            )
+
         return findings

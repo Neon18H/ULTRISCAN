@@ -409,6 +409,10 @@ class WebScanPipelineTests(TestCase):
         lookup = {row['header']: row['status'] for row in interpreted_headers}
         self.assertEqual(lookup.get('server'), 'WARNING')
         self.assertEqual(lookup.get('x-frame-options'), 'WARNING')
+        web_findings = result.engine_metadata['structured_results']['web_findings']
+        titles = {finding['title'] for finding in web_findings}
+        self.assertIn('HSTS ausente', titles)
+        self.assertIn('CSP ausente', titles)
         self.assertIn('tools', result.engine_metadata['structured_results'])
 
     @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
@@ -488,3 +492,4 @@ class WebScanPipelineTests(TestCase):
         self.assertIn('-rl', args)
         self.assertIn('-bs', args)
         self.assertIn('-retries', args)
+        self.assertIn('-tags', args)

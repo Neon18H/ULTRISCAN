@@ -176,6 +176,29 @@ def parse_nikto_text(raw_output: str) -> list[dict]:
     return findings
 
 
+def parse_katana_output(raw_output: str) -> list[dict]:
+    rows = parse_json_lines(raw_output)
+    endpoints: list[dict] = []
+    for row in rows:
+        url = row.get('url') or row.get('request', {}).get('endpoint') or ''
+        if not isinstance(url, str) or not url:
+            continue
+        parsed = urlparse(url)
+        path = parsed.path or '/'
+        endpoints.append(
+            {
+                'path': path,
+                'url': url,
+                'status_code': _to_int(row.get('status_code') or row.get('response', {}).get('status_code')),
+                'length': _to_int(row.get('content_length') or row.get('response', {}).get('content_length')),
+                'redirect': row.get('redirect') or '',
+                'source': 'katana',
+                'priority': 'medium' if any(token in path.lower() for token in ('api', 'admin', 'auth', 'login')) else 'low',
+            }
+        )
+    return endpoints
+
+
 def parse_wpscan_json(raw_output: str) -> dict:
     try:
         payload = json.loads(raw_output)

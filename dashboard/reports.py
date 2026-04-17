@@ -51,6 +51,28 @@ class SimpleEnterprisePDF:
         self.page.operations.append(TextOp(text=text, size=size, y=self.cursor_y, color=color, x=x))
         self.add_spacer(size + 5)
 
+    def add_rule(self):
+        self.add_line('─' * 100, size=9, color=(0.78, 0.82, 0.9))
+
+    def add_table(self, headers, rows, widths=None):
+        widths = widths or [18 for _ in headers]
+        fmt_header = ' | '.join(str(h).ljust(widths[idx])[: widths[idx]] for idx, h in enumerate(headers))
+        self.add_line(fmt_header, size=9, color=(0.06, 0.23, 0.47))
+        self.add_line('-' * min(sum(widths) + (3 * (len(widths) - 1)), 112), size=9, color=(0.78, 0.82, 0.9))
+        for row in rows:
+            rendered = ' | '.join(str(row[idx]).ljust(widths[idx])[: widths[idx]] for idx in range(min(len(row), len(widths))))
+            self.add_line(rendered, size=9, color=(0.12, 0.16, 0.24))
+
+    def add_bar_chart(self, title, items, max_width=34):
+        self.add_heading(title, level=3)
+        max_value = max([int(v) for _, v in items], default=1)
+        max_value = max(max_value, 1)
+        for label, value in items:
+            value_int = int(value or 0)
+            bar_len = max(1, int((value_int / max_value) * max_width)) if value_int else 0
+            bar = '█' * bar_len if bar_len else '·'
+            self.add_line(f'{str(label)[:18].ljust(18)} {str(value_int).rjust(4)}  {bar}', size=9)
+
     def add_paragraph(self, text, size=10, width=95):
         for line in textwrap.wrap(text, width=width):
             self.add_line(line, size=size)
@@ -239,9 +261,13 @@ def build_scan_report_pdf(*, scan, generated_by):
     elif severity_totals['medium'] > 0:
         risk_level = 'MEDIUM'
 
+    web_findings = structured.get('web_findings') or structured.get('web_findings_basic') or []
+    module_status = structured.get('module_status') or {}
+
     # 1. Cover
     pdf.add_heading('UltriScan', level=1)
     pdf.add_paragraph('Enterprise Vulnerability Assessment Report', size=11)
+    pdf.add_rule()
     pdf.add_spacer(8)
     pdf.add_kv('Tipo de scan', scan_type)
     pdf.add_kv('Objetivo', target)
@@ -249,6 +275,8 @@ def build_scan_report_pdf(*, scan, generated_by):
     pdf.add_kv('Fecha', scan.created_at.strftime('%Y-%m-%d %H:%M UTC'))
     pdf.add_kv('Generado por', generated_by.get_full_name() or generated_by.email)
     pdf.add_kv('Nivel de riesgo observado', risk_level)
+    pdf.add_spacer(8)
+    pdf.add_paragraph('Documento orientado a comités técnicos y operaciones de seguridad con foco en remediación accionable.')
 
     # 2. TOC
     pdf._new_page()
@@ -282,6 +310,16 @@ def build_scan_report_pdf(*, scan, generated_by):
         f"Resumen de severidad: Critical={severity_totals['critical']}, High={severity_totals['high']}, "
         f"Medium={severity_totals['medium']}, Low={severity_totals['low']}, Info={severity_totals['info']}."
     )
+    pdf.add_table(
+        ['KPI', 'Valor', 'Contexto'],
+        [
+            ['Controles presentes', structured.get('web_kpis', {}).get('controls_present', 0), 'Hardening activo detectado.'],
+            ['Controles ausentes', structured.get('web_kpis', {}).get('controls_absent', 0), 'Brechas de configuración base.'],
+            ['Exposición tecnológica', structured.get('web_kpis', {}).get('exposure_observed', 0), 'Información útil para fingerprinting.'],
+            ['Score scan web', f"{structured.get('web_kpis', {}).get('score', 'n/a')}/100", 'Indicador agregado de postura web.'],
+        ],
+        widths=[26, 12, 62],
+    )
 
     # 4. Methodology
     pdf.add_spacer(12)
@@ -294,7 +332,7 @@ def build_scan_report_pdf(*, scan, generated_by):
     if structured.get('warnings'):
         pdf.add_paragraph(f"Warnings relevantes: {' | '.join(structured.get('warnings')[:6])}", width=100)
 
-    # 5. Technical results
+    # 5. Technical results + charts
     pdf._new_page()
     pdf.add_heading('Resultados técnicos', level=2)
     fingerprint = structured.get('fingerprint') or {}
@@ -306,6 +344,12 @@ def build_scan_report_pdf(*, scan, generated_by):
         pdf.add_spacer(10)
         pdf.add_heading('Tecnologías detectadas', level=2)
         pdf.add_paragraph(', '.join(technologies[:40]), width=104)
+    pdf.add_spacer(8)
+    pdf.add_bar_chart('Gráfico · Hallazgos por severidad', [(sev.upper(), total) for sev, total in severity_totals.items()])
+    endpoint_status = structured.get('endpoints_by_status') or {}
+    if endpoint_status:
+        pdf.add_spacer(6)
+        pdf.add_bar_chart('Gráfico · Endpoints por status', list(endpoint_status.items())[:8], max_width=26)
     pdf.add_spacer(10)
     pdf.add_heading('Endpoints encontrados', level=2)
     if endpoints:
@@ -338,6 +382,20 @@ def build_scan_report_pdf(*, scan, generated_by):
         pdf.add_paragraph('Sin observaciones de headers.')
 
     pdf.add_spacer(10)
+    if module_status:
+        pdf.add_heading('Herramientas ejecutadas/omitidas', level=2)
+        pdf.add_table(
+            ['Estado módulo', 'Cantidad', 'Detalle'],
+            [
+                ['OK', module_status.get('ok', 0), ', '.join(tools.get('executed') or []) or 'N/A'],
+                ['Warning', module_status.get('warning', 0), 'Ejecución con alertas o cobertura parcial'],
+                ['Failed', module_status.get('failed', 0), ', '.join([r.get('tool', '') for r in tools.get('failed') or []]) or 'N/A'],
+                ['Skipped', module_status.get('skipped', 0), ', '.join([r.get('tool', '') for r in tools.get('skipped') or []]) or 'N/A'],
+            ],
+            widths=[20, 10, 70],
+        )
+        pdf.add_spacer(8)
+
     pdf.add_heading('Vulnerabilidades detectadas', level=2)
     if vulns:
         for vuln in vulns[:80]:
@@ -352,6 +410,20 @@ def build_scan_report_pdf(*, scan, generated_by):
     # 6. Findings
     pdf._new_page()
     pdf.add_heading('Findings priorizados', level=2)
+    if web_findings:
+        pdf.add_heading('Hallazgos web de configuración', level=3)
+        web_rows = []
+        for finding in web_findings[:20]:
+            web_rows.append(
+                [
+                    finding.get('title', 'Web finding'),
+                    str(finding.get('severity', 'info')).upper(),
+                    (finding.get('evidence') or '-')[:46],
+                    (finding.get('remediation') or '-')[:46],
+                ]
+            )
+        pdf.add_table(['Hallazgo', 'Sev', 'Evidencia', 'Remediación'], web_rows, widths=[28, 8, 32, 32])
+        pdf.add_spacer(10)
     if findings:
         for finding in findings[:80]:
             pdf.add_paragraph(
@@ -366,10 +438,10 @@ def build_scan_report_pdf(*, scan, generated_by):
     # 7. Recommendations
     pdf.add_spacer(10)
     pdf.add_heading('Recomendaciones', level=2)
-    pdf.add_paragraph('1) Priorizar la remediación de severidades Critical/High en menos de 7 días.')
-    pdf.add_paragraph('2) Aplicar hardening de headers y reducir exposición de endpoints administrativos.')
-    pdf.add_paragraph('3) Reducir exposición tecnológica: ocultar banners Server y X-Powered-By cuando aplique.')
-    pdf.add_paragraph('4) Repetir escaneo tras remediación para validar cierre técnico.')
+    pdf.add_paragraph('Quick wins: activar HSTS/CSP, ocultar Server/X-Powered-By, y endurecer cookies de sesión.')
+    pdf.add_paragraph('Prioridad alta: reducir superficie de login/admin y revisar rutas sensibles con controles de acceso.')
+    pdf.add_paragraph('AppSec: aplicar validaciones anti-XSS/SQLi, WAF/rate-limiting y monitoreo de redirecciones.')
+    pdf.add_paragraph('Operación: repetir escaneo tras remediación y validar cierre con evidencia técnica.')
 
     # 8. Technical metadata
     pdf.add_spacer(10)
