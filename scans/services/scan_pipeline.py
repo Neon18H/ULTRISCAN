@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 from dataclasses import dataclass
@@ -19,6 +18,7 @@ from integrations.runners.nmap_runner import NmapRunner
 from scans.engines.tooling import ExternalToolRunner, ToolExecutionResult
 from scans.models import RawEvidence, ScanExecution, ServiceFinding, WebFinding
 from scans.parsers.web_parsers import (
+    parse_ffuf_output,
     parse_gobuster_json,
     parse_nikto_text,
     parse_nuclei_json,
@@ -378,6 +378,7 @@ class ScanPipelineService:
         if _record_module('whatweb', whatweb, required=True):
             ww_payload = parse_whatweb_json(whatweb.stdout)
             plugins = self._extract_whatweb_plugins(ww_payload)
+            fingerprint = self._build_whatweb_fingerprint(ww_payload, target)
             if isinstance(plugins, dict):
                 technologies.update(plugins.keys())
                 fingerprint_detected = bool(plugins)
@@ -401,6 +402,8 @@ class ScanPipelineService:
                 raw_output=whatweb.stdout,
                 metadata={'stderr': whatweb.stderr, 'command': whatweb.command, 'scan_type': scan_type},
             )
+        else:
+            fingerprint = {}
 
         # 2) Enumeración
         preferred_enum_tool = 'ffuf' if scan_type in {'web_api', 'web_full'} else 'gobuster'
@@ -438,14 +441,10 @@ class ScanPipelineService:
                     enum_res = fallback_result
                 if enum_ok:
                     if enum_tool == 'ffuf':
-                        for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
-                            try:
-                                obj = json.loads(row)
-                                endpoints.append({'path': obj.get('url', ''), 'status_code': obj.get('status')})
-                            except json.JSONDecodeError:
-                                continue
+                        endpoints = parse_ffuf_output(enum_res.stdout)
                     else:
                         endpoints = parse_gobuster_json(enum_res.stdout)
+                    endpoints = self._dedupe_endpoints(target, endpoints)
                     RawEvidence.objects.create(
                         organization=scan.organization,
                         scan_execution=scan,
@@ -558,46 +557,48 @@ class ScanPipelineService:
                     metadata={'stderr': wp_res.stderr, 'command': wp_res.command, 'scan_type': scan_type},
                 )
 
+        vulnerabilities = self._dedupe_vulnerabilities(vulnerabilities)
+
         if not tools_executed:
             warnings.append('No hubo herramientas externas exitosas; se devuelve resultado parcial usando HTTP probe/headers.')
 
         with transaction.atomic():
             host, port = url_host_port(target)
-            # service finding for correlation rules (e.g. wordpress/php/http)
-            for tech in sorted(technologies):
-                ServiceFinding.objects.get_or_create(
-                    organization=scan.organization,
-                    scan_execution=scan,
-                    host=host,
-                    port=port,
-                    protocol='tcp',
-                    service='http' if port in {80, 8080} else 'https',
-                    product=tech,
-                    defaults={
-                        'state': 'open',
-                        'version': '',
-                        'raw_version': '',
-                        'normalized_version': '',
-                        'extrainfo': '',
-                        'banner': '',
-                        'scripts': [],
-                    },
-                )
+            ServiceFinding.objects.get_or_create(
+                organization=scan.organization,
+                scan_execution=scan,
+                host=host,
+                port=port,
+                protocol='tcp',
+                service='http' if port in {80, 8080} else 'https',
+                defaults={
+                    'state': 'open',
+                    'product': headers.get('Server', '')[:120],
+                    'version': '',
+                    'raw_version': '',
+                    'normalized_version': '',
+                    'extrainfo': '',
+                    'banner': '',
+                    'scripts': [],
+                },
+            )
 
             for endpoint in endpoints:
-                WebFinding.objects.create(
+                endpoint_path = str(endpoint.get('path', '')).strip() or '/'
+                endpoint_url = str(endpoint.get('url') or f"{target.rstrip('/')}/{endpoint_path.lstrip('/')}")
+                WebFinding.objects.get_or_create(
                     organization=scan.organization,
                     scan_execution=scan,
                     host=host,
-                    url=f"{target.rstrip('/')}/{str(endpoint.get('path', '')).lstrip('/')}",
+                    url=endpoint_url,
                     title='Endpoint discovered',
                     technology='',
-                    evidence=str(endpoint),
-                    metadata={'module': 'enumeration', 'status_code': endpoint.get('status_code')},
+                    evidence=f"{endpoint_path} [{endpoint.get('status_code') or 'n/a'}]",
+                    metadata={'module': 'enumeration', **endpoint},
                 )
 
             for tech in sorted(technologies):
-                WebFinding.objects.create(
+                WebFinding.objects.get_or_create(
                     organization=scan.organization,
                     scan_execution=scan,
                     host=host,
@@ -628,7 +629,7 @@ class ScanPipelineService:
                 )
 
             for header_finding in interpreted_headers:
-                WebFinding.objects.create(
+                WebFinding.objects.get_or_create(
                     organization=scan.organization,
                     scan_execution=scan,
                     host=host,
@@ -664,20 +665,27 @@ class ScanPipelineService:
             'skipped': tools_skipped,
             'dependency_checks': dependency_checks,
         }
+        http_status = probe_result.get('status_code')
+        redirections = fingerprint.get('redirections') or []
+        web_basic_findings = self._build_basic_web_findings(endpoints=endpoints, headers_analysis=self._group_interpreted_headers(interpreted_headers))
         metadata = {
             'pipeline': 'web',
             'modules': modules,
             'structured_results': {
                 'target': target,
+                'target_url': target,
+                'http_status': http_status,
+                'redirects': redirections,
                 'http_probe': probe_result,
                 'scan_type': scan_type,
                 'technologies': sorted(technologies),
                 'endpoints': endpoints,
+                'web_findings_basic': web_basic_findings,
                 'vulnerabilities': vulnerabilities,
                 'headers': headers,
                 'interpreted_headers': interpreted_headers,
                 'cms': cms,
-                'fingerprint': parse_whatweb_json(modules.get('whatweb', {}).get('stdout', '') if modules.get('whatweb') else ''),
+                'fingerprint': fingerprint,
                 'tools': tools_map,
                 'tools_available': tools_available,
                 'tools_executed': tools_executed,
@@ -763,14 +771,56 @@ class ScanPipelineService:
     def run_gobuster(self, target: str, wordlist: str):
         return self.external_runner.run(
             'gobuster',
-            ['dir', '-u', target, '-w', wordlist, '-o', '/dev/stdout', '--format', 'json', '-k', '-r', '--no-error'],
+            [
+                'dir',
+                '-u',
+                target,
+                '-w',
+                wordlist,
+                '--no-error',
+                '--no-color',
+                '-k',
+                '-q',
+            ],
         )
 
     def run_ffuf(self, target: str, wordlist: str):
-        return self.external_runner.run('ffuf', ['-u', f'{target.rstrip("/")}/FUZZ', '-w', wordlist, '-json'])
+        return self.external_runner.run(
+            'ffuf',
+            [
+                '-u',
+                f'{target.rstrip("/")}/FUZZ',
+                '-w',
+                wordlist,
+                '-json',
+                '-mc',
+                '200,204,301,302,307,401,403',
+            ],
+        )
 
     def run_nuclei(self, target: str, templates_path: Path):
-        return self.external_runner.run('nuclei', ['-u', target, '-jsonl', '-silent', '-t', str(templates_path)])
+        return self.external_runner.run(
+            'nuclei',
+            [
+                '-u',
+                target,
+                '-jsonl',
+                '-silent',
+                '-no-color',
+                '-c',
+                '8',
+                '-rl',
+                '30',
+                '-bs',
+                '25',
+                '-timeout',
+                '8',
+                '-retries',
+                '1',
+                '-t',
+                str(templates_path),
+            ],
+        )
 
     def _resolve_wordlist(self) -> tuple[str | None, str]:
         candidates = [
@@ -914,3 +964,77 @@ class ScanPipelineService:
                 'informational': len(informational) + len(exposure),
             },
         }
+
+    def _dedupe_endpoints(self, target: str, endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[str, Any]] = set()
+        for endpoint in endpoints:
+            path = str(endpoint.get('path') or '').strip() or '/'
+            if not path.startswith('/'):
+                path = f'/{path}'
+            status = endpoint.get('status_code')
+            key = (path, status)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(
+                {
+                    **endpoint,
+                    'path': path,
+                    'url': endpoint.get('url') or f'{target.rstrip("/")}{path}',
+                }
+            )
+        return deduped
+
+    def _dedupe_vulnerabilities(self, vulnerabilities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for vuln in vulnerabilities:
+            key = (
+                str(vuln.get('type') or ''),
+                str(vuln.get('name') or ''),
+                str(vuln.get('matched_at') or ''),
+                str(vuln.get('reference') or ''),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(vuln)
+        return deduped
+
+    def _build_whatweb_fingerprint(self, payload: dict[str, Any], target: str) -> dict[str, Any]:
+        plugins = self._extract_whatweb_plugins(payload)
+        technologies = sorted(plugins.keys()) if isinstance(plugins, dict) else []
+        return {
+            'target': payload.get('target') or target,
+            'ip': payload.get('ip') or '',
+            'http_status': payload.get('http_status') or payload.get('status') or '',
+            'country': payload.get('country') or '',
+            'server': self._extract_plugin_text(plugins.get('HTTPServer')) if isinstance(plugins, dict) else '',
+            'x_powered_by': self._extract_plugin_text(plugins.get('X-Powered-By')) if isinstance(plugins, dict) else '',
+            'plugins': plugins if isinstance(plugins, dict) else {},
+            'technologies': technologies,
+            'redirections': payload.get('redirection') or payload.get('redirects') or [],
+        }
+
+    def _build_basic_web_findings(self, *, endpoints: list[dict[str, Any]], headers_analysis: dict[str, Any]) -> list[dict[str, Any]]:
+        findings: list[dict[str, Any]] = []
+        for endpoint in endpoints[:15]:
+            status = endpoint.get('status_code')
+            if status in {200, 401, 403}:
+                findings.append(
+                    {
+                        'title': 'Endpoint sensible descubierto',
+                        'severity': 'low',
+                        'evidence': f"{endpoint.get('path')} ({status})",
+                    }
+                )
+        for header in headers_analysis.get('absent', [])[:4]:
+            findings.append(
+                {
+                    'title': f"Header faltante: {header.get('header')}",
+                    'severity': 'medium',
+                    'evidence': header.get('message'),
+                }
+            )
+        return findings

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import urlparse
 
 from scans.engines.tooling import parse_json_lines
@@ -47,11 +48,52 @@ def parse_whatweb_json(raw_output: str) -> dict:
 def parse_gobuster_json(raw_output: str) -> list[dict]:
     rows = parse_json_lines(raw_output)
     endpoints: list[dict] = []
+    if not rows:
+        for line in (raw_output or '').splitlines():
+            entry = line.strip()
+            if not entry or not entry.startswith('/'):
+                continue
+            match = re.match(r'^(?P<path>/\S+)\s+\(Status:\s*(?P<status>\d+)', entry)
+            if not match:
+                continue
+            endpoints.append(
+                {
+                    'path': match.group('path'),
+                    'status_code': int(match.group('status')),
+                    'source': 'gobuster',
+                }
+            )
+        return endpoints
     for row in rows:
         path = row.get('path') or row.get('url') or row.get('input') or ''
         status = row.get('status') or row.get('status_code')
         if path:
-            endpoints.append({'path': path, 'status_code': status})
+            endpoints.append({'path': path, 'status_code': status, 'source': 'gobuster'})
+    return endpoints
+
+
+def parse_ffuf_output(raw_output: str) -> list[dict]:
+    rows = parse_json_lines(raw_output)
+    endpoints: list[dict] = []
+    for row in rows:
+        url = row.get('url') or ''
+        path = row.get('path') or ''
+        if not path and isinstance(url, str):
+            parsed = urlparse(url)
+            path = parsed.path or '/'
+        if not path:
+            continue
+        endpoints.append(
+            {
+                'path': path,
+                'url': url,
+                'status_code': row.get('status'),
+                'length': row.get('length'),
+                'words': row.get('words'),
+                'lines': row.get('lines'),
+                'source': 'ffuf',
+            }
+        )
     return endpoints
 
 

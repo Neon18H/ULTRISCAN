@@ -67,3 +67,20 @@ class ScanDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Queued')
         self.assertContains(response, 'Aún no hay resultados estructurados')
+
+    def test_scan_report_pdf_is_downloadable(self):
+        scan = ScanExecution.objects.create(
+            organization=self.organization,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            summary={'scan_type': 'web_basic'},
+            engine_metadata={'structured_results': {'target': 'https://example.com', 'scan_type': 'web_basic'}},
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('scans-report-pdf', args=[scan.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertIn('attachment; filename=', response['Content-Disposition'])
