@@ -15,7 +15,7 @@ from accounts.tenancy import TenantQuerysetMixin, get_active_membership, get_act
 from assets.models import Asset
 from findings.models import Finding
 from findings.nvd_correlation import FindingNvdCorrelationService
-from knowledge_base.models import AdvisorySyncJob, ExternalAdvisory, VulnerabilityRule
+from knowledge_base.models import AdvisorySyncJob, CVEExploit, ExternalAdvisory, VulnerabilityRule
 from scan_profiles.models import ScanProfile
 from scans.models import ScanExecution, ServiceFinding
 
@@ -53,6 +53,10 @@ class DashboardHomeView(LoginRequiredMixin, TemplateView):
                     'nvd_recent_imported': 0,
                     'nvd_critical_high_total': 0,
                     'nvd_last_sync_at': None,
+                    'cves_with_exploit_total': 0,
+                    'exploitable_findings_total': 0,
+                    'real_exposure_percentage': 0,
+                    'top_exploitable_vulns': [],
                 }
             )
             return context
@@ -134,6 +138,55 @@ class DashboardHomeView(LoginRequiredMixin, TemplateView):
             .order_by('-finished_at')
             .values_list('finished_at', flat=True)
             .first(),
+        )
+
+        exploitable_cve_ids = safe_query(
+            [],
+            lambda: list(
+                CVEExploit.objects.values_list('cve__cve_id', flat=True).distinct()
+            ),
+        )
+        context['cves_with_exploit_total'] = len(exploitable_cve_ids)
+        context['exploitable_findings_total'] = safe_query(
+            0,
+            lambda: Finding.objects.filter(
+                organization=org,
+                vulnerability_rule__cve__in=exploitable_cve_ids,
+            ).count(),
+        )
+        open_vuln_findings = safe_query(
+            0,
+            lambda: Finding.objects.filter(
+                organization=org,
+                vulnerability_rule__isnull=False,
+                status=Finding.Status.OPEN,
+            ).count(),
+        )
+        exploitable_open_findings = safe_query(
+            0,
+            lambda: Finding.objects.filter(
+                organization=org,
+                vulnerability_rule__cve__in=exploitable_cve_ids,
+                status=Finding.Status.OPEN,
+            ).count(),
+        )
+        context['real_exposure_percentage'] = (
+            round((exploitable_open_findings / open_vuln_findings) * 100, 1)
+            if open_vuln_findings
+            else 0
+        )
+        context['top_exploitable_vulns'] = safe_query(
+            [],
+            lambda: list(
+                Finding.objects.filter(
+                    organization=org,
+                    vulnerability_rule__cve__in=exploitable_cve_ids,
+                )
+                .exclude(vulnerability_rule__cve='')
+                .values('vulnerability_rule__cve', 'title', 'severity')
+                .annotate(total=Count('id'))
+                .order_by('-total', 'vulnerability_rule__cve')[:5]
+            ),
         )
 
         recent_scans = context['recent_scans']
@@ -403,6 +456,41 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             .order_by('-created_at')
         )
 
+    def _severity_with_exploit(self, severity: str, has_exploit: bool) -> str:
+        if not has_exploit:
+            return severity
+        ranking = ['info', 'low', 'medium', 'high', 'critical']
+        if severity not in ranking:
+            return severity
+        index = min(ranking.index(severity) + 1, len(ranking) - 1)
+        return ranking[index]
+
+    def _build_exploit_context(self, nvd_correlation):
+        cve_ids: set[str] = set()
+        rule_cve = ((self.object.vulnerability_rule.cve or '').strip().upper() if self.object.vulnerability_rule else '')
+        if rule_cve:
+            cve_ids.add(rule_cve)
+        advisory = nvd_correlation.get('advisory') if isinstance(nvd_correlation, dict) else None
+        if advisory:
+            cve_ids.add(advisory.cve_id)
+
+        links = list(
+            CVEExploit.objects.filter(cve__cve_id__in=cve_ids)
+            .select_related('exploit', 'cve')
+            .order_by('exploit__exploit_id')
+        )
+        has_exploit = bool(links)
+        adjusted_severity = self._severity_with_exploit(self.object.severity, has_exploit)
+
+        return {
+            'has_exploit': has_exploit,
+            'is_exploitable': has_exploit,
+            'risk_delta': 'up' if has_exploit else 'none',
+            'severity_original': self.object.severity,
+            'severity_adjusted': adjusted_severity,
+            'links': links,
+        }
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         matched_rule = self.object.vulnerability_rule or self.object.misconfiguration_rule or self.object.end_of_life_rule
@@ -420,6 +508,17 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         context['nvd_correlation'] = safe_query(
             FindingNvdCorrelationService()._no_match_payload(self.object),
             lambda: FindingNvdCorrelationService().correlate(self.object),
+        )
+        context['exploit_context'] = safe_query(
+            {
+                'has_exploit': False,
+                'is_exploitable': False,
+                'risk_delta': 'none',
+                'severity_original': self.object.severity,
+                'severity_adjusted': self.object.severity,
+                'links': [],
+            },
+            lambda: self._build_exploit_context(context['nvd_correlation']),
         )
         return context
 

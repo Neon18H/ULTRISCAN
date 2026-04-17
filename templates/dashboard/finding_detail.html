@@ -160,6 +160,39 @@
       </div>
       {% endif %}
     </div>
+
+    <div class="surface-card p-3 p-xl-4 mt-3">
+      {% include 'includes/section_header.html' with eyebrow='Exploit intelligence' title='Exploit disponible' %}
+      {% if exploit_context.has_exploit %}
+      <div class="alert alert-danger border mb-3">
+        <i class="bi bi-lightning-charge-fill me-1"></i>Se encontraron exploits públicos para este CVE. Fuente: ExploitDB.
+      </div>
+      <div class="table-responsive">
+        <table class="table table-enterprise align-middle mb-0">
+          <thead><tr><th>Exploit</th><th>Tipo</th><th>Plataforma</th><th>Fuente</th></tr></thead>
+          <tbody>
+          {% for link in exploit_context.links %}
+            <tr>
+              <td>
+                <a class="fw-semibold text-decoration-none" href="https://www.exploit-db.com/exploits/{{ link.exploit.exploit_id }}" target="_blank" rel="noopener noreferrer">EDB-{{ link.exploit.exploit_id }}</a>
+                <div class="small text-muted">{{ link.exploit.title|truncatechars:100 }}</div>
+                <div class="small text-muted font-monospace">{{ link.exploit.file_path }}</div>
+              </td>
+              <td>{{ link.exploit.type|default:'-' }}</td>
+              <td>{{ link.exploit.platform|default:'-' }}</td>
+              <td><span class="badge text-bg-light border">ExploitDB</span></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="alert alert-secondary border mb-0">
+        <i class="bi bi-shield-check me-1"></i>No se encontraron exploits públicos correlacionados para este finding.
+      </div>
+      {% endif %}
+    </div>
+
   </div>
 
   <div class="col-xl-4">
@@ -174,10 +207,20 @@
 
     <div class="surface-card p-3 p-xl-4 mb-3">
       {% include 'includes/section_header.html' with eyebrow='Risk' title='Severidad & Confidence' %}
-      <div class="d-flex align-items-center gap-2 mb-2">
+      <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
         {% include 'includes/severity_badge.html' with severity=object.severity %}
+        {% if exploit_context.severity_adjusted != object.severity %}
+        <span class="small text-muted">→</span>
+        {% include 'includes/severity_badge.html' with severity=exploit_context.severity_adjusted %}
+        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">Risk +1 por exploit público</span>
+        {% endif %}
         <span class="badge text-bg-light border text-uppercase">{{ object.confidence }}</span>
       </div>
+      {% if exploit_context.is_exploitable %}
+      <div class="small text-danger fw-semibold">Estado de explotación: Exploitable</div>
+      {% else %}
+      <div class="small text-muted">Estado de explotación: Sin exploit público correlacionado</div>
+      {% endif %}
       <div class="small text-muted">Estado actual: {{ object.get_status_display }}</div>
     </div>
 

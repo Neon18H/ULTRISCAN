@@ -187,6 +187,37 @@ class ExternalAdvisoryCpeMatch(TimeStampedModel):
         ]
 
 
+
+
+class Exploit(TimeStampedModel):
+    exploit_id = models.PositiveIntegerField(unique=True, db_index=True)
+    title = models.CharField(max_length=255)
+    platform = models.CharField(max_length=80, blank=True)
+    type = models.CharField(max_length=80, blank=True)
+    file_path = models.CharField(max_length=255, blank=True)
+    cve = models.CharField(max_length=32, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ['exploit_id']
+
+    def __str__(self):
+        return f'EDB-{self.exploit_id}: {self.title}'
+
+
+class CVEExploit(TimeStampedModel):
+    cve = models.ForeignKey(ExternalAdvisory, on_delete=models.CASCADE, related_name='exploit_links')
+    exploit = models.ForeignKey(Exploit, on_delete=models.CASCADE, related_name='cve_links')
+
+    class Meta:
+        ordering = ['cve_id', 'exploit_id']
+        constraints = [
+            models.UniqueConstraint(fields=['cve', 'exploit'], name='kb_unique_cve_exploit_link'),
+        ]
+
+    def __str__(self):
+        return f'{self.cve.cve_id} -> EDB-{self.exploit.exploit_id}'
+
+
 class AdvisorySyncJob(TimeStampedModel):
     class Status(models.TextChoices):
         PENDING = 'pending', 'Pending'

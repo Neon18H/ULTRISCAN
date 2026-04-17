@@ -26,6 +26,13 @@
   <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Last NVD sync' value=nvd_last_sync_at|date:'Y-m-d H:i'|default:'-' icon='bi-clock-history' helper='Última ejecución finalizada' %}</div>
 </div>
 
+
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-xl-4">{% include 'includes/metrics_card.html' with title='CVEs con exploit público' value=cves_with_exploit_total icon='bi-bug-fill' helper='Correladas con ExploitDB' %}</div>
+  <div class="col-sm-6 col-xl-4">{% include 'includes/metrics_card.html' with title='Findings explotables' value=exploitable_findings_total icon='bi-lightning-charge' helper='Hallazgos con exploit conocido' %}</div>
+  <div class="col-sm-6 col-xl-4">{% include 'includes/metrics_card.html' with title='Exposición real (%)' value=real_exposure_percentage icon='bi-graph-up-arrow' helper='Open vuln findings con exploit' %}</div>
+</div>
+
 <div class="row g-3 mb-3">
   <div class="col-xl-7">
     <div class="surface-card p-3 p-xl-4 h-100">
@@ -114,6 +121,36 @@
       </div>
       {% else %}
         {% include 'includes/empty_state.html' with icon='bi-broadcast' title='No scans yet' description='Aún no hay telemetría de puertos/servicios. Ejecuta un scan inicial.' cta_url='/scans/new/' cta_label='Lanzar scan' %}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+
+<div class="row g-3 mt-1">
+  <div class="col-12">
+    <div class="surface-card p-3 p-xl-4">
+      {% include 'includes/section_header.html' with eyebrow='Exploit intelligence' title='Top vulnerabilidades explotables' %}
+      {% if top_exploitable_vulns %}
+      <div class="table-responsive">
+        <table class="table table-enterprise align-middle mb-0">
+          <thead>
+            <tr><th>CVE</th><th>Finding</th><th>Severidad</th><th>Apariciones</th></tr>
+          </thead>
+          <tbody>
+          {% for row in top_exploitable_vulns %}
+            <tr>
+              <td class="fw-semibold">{{ row.vulnerability_rule__cve }}</td>
+              <td>{{ row.title|truncatechars:90 }}</td>
+              <td>{% include 'includes/severity_badge.html' with severity=row.severity %}</td>
+              <td><span class="badge text-bg-light border">{{ row.total }}</span></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0">Todavía no hay findings vinculados a CVEs con exploits públicos en tu organización.</p>
       {% endif %}
     </div>
   </div>
