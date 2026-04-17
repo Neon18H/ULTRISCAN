@@ -123,15 +123,15 @@
             <td><span class="badge text-bg-light border">{{ obj.engine_metadata.requested_scan_type|default:'nmap_discovery' }}</span></td>
             <td>{{ obj.profile.name }}</td>
             <td>
-              <span class="badge status-badge status-{{ obj.status }}">{{ obj.get_status_display }}</span>
+              <span class="badge status-badge status-{{ obj.rendered_status }}">{{ obj.rendered_status_display }}</span>
               {% if obj.status_message %}<div class="small text-muted mt-1">{{ obj.status_message }}</div>{% endif %}
             </td>
             <td>
               <div class="d-flex align-items-center gap-2">
-                <div class="progress-ring" style="--progress: {{ obj.progress_percent|default:0 }};"><span>{{ obj.progress_percent|default:0 }}%</span></div>
+                <div class="progress-ring" style="--progress: {{ obj.rendered_progress_percent|default:0 }};"><span>{{ obj.rendered_progress_percent|default:0 }}%</span></div>
                 <div>
                   <div class="small fw-semibold">{{ obj.progress_stage_label }}</div>
-                  {% if obj.progress_stage %}<div class="text-muted tiny">Phase: {{ obj.progress_stage }}</div>{% endif %}
+                  {% if obj.rendered_progress_stage %}<div class="text-muted tiny">Phase: {{ obj.rendered_progress_stage }}</div>{% endif %}
                 </div>
               </div>
             </td>

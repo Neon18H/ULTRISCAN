@@ -60,6 +60,27 @@ class ScanListOperationsTests(TestCase):
             progress_stage='completed',
             engine_metadata={'requested_scan_type': 'infra_standard'},
         )
+        self.completed_inconsistent_scan = ScanExecution.objects.create(
+            organization=self.organization,
+            asset=self.asset_a,
+            profile=self.profile_web,
+            launched_by=self.user,
+            status=ScanExecution.Status.COMPLETED,
+            progress_percent=0,
+            progress_stage='queued',
+            engine_metadata={'requested_scan_type': 'web_basic'},
+        )
+        self.failed_inconsistent_scan = ScanExecution.objects.create(
+            organization=self.organization,
+            asset=self.asset_b,
+            profile=self.profile_infra,
+            launched_by=self.user,
+            status=ScanExecution.Status.FAILED,
+            progress_percent=0,
+            progress_stage='queued',
+            status_message='falló por timeout',
+            engine_metadata={'requested_scan_type': 'infra_standard'},
+        )
 
     def test_scan_list_filters_by_asset_and_archive(self):
         self.client.force_login(self.user)
@@ -82,3 +103,36 @@ class ScanListOperationsTests(TestCase):
         self.assertEqual(unarchive_response.status_code, 302)
         self.web_scan.refresh_from_db()
         self.assertFalse(self.web_scan.is_archived)
+
+    def test_completed_scans_render_consistent_status_and_progress(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            reverse('scans-list'),
+            {
+                'scan_id': self.completed_inconsistent_scan.id,
+                'status': ScanExecution.Status.COMPLETED,
+                'archived': 'active',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Completed')
+        self.assertContains(response, '100%')
+        self.assertContains(response, 'Phase: completed')
+
+    def test_failed_scans_render_failed_phase_instead_of_queued(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            reverse('scans-list'),
+            {
+                'scan_id': self.failed_inconsistent_scan.id,
+                'status': ScanExecution.Status.FAILED,
+                'archived': 'active',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Failed')
+        self.assertContains(response, 'Phase: failed')

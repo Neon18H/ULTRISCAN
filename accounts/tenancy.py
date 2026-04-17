@@ -37,8 +37,18 @@ class TenantQuerysetMixin:
         return org
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        return queryset.filter(**{self.organization_field: self.get_organization()})
+        queryset_getter = getattr(super(), 'get_queryset', None)
+        if callable(queryset_getter):
+            queryset = queryset_getter()
+        elif getattr(self, 'queryset', None) is not None:
+            queryset = self.queryset.all()
+        elif getattr(self, 'model', None) is not None:
+            queryset = self.model._default_manager.all()
+        else:
+            raise AttributeError(
+                f'{self.__class__.__name__} must define model/queryset or inherit from a class with get_queryset().'
+            )
+        return queryset.filter(**{f'{self.organization_field}_id': self.get_organization().id})
 
 
 class OrganizationRolePermissionMixin:

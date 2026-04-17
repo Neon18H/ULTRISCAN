@@ -54,8 +54,16 @@ def _mark_finished(scan: ScanExecution, *, status: str, error_message: str = '')
         scan.progress_percent = 100
         scan.progress_stage = 'completed'
         scan.status_message = 'Scan completado'
-    elif status == ScanExecution.Status.FAILED and error_message:
-        scan.status_message = error_message[:255]
+    elif status == ScanExecution.Status.FAILED:
+        scan.progress_stage = 'failed'
+        if error_message:
+            scan.status_message = error_message[:255]
+        elif not scan.status_message:
+            scan.status_message = 'Scan fallido'
+    elif status == ScanExecution.Status.CANCELLED:
+        scan.progress_stage = 'cancelled'
+        if not scan.status_message:
+            scan.status_message = 'Scan cancelado'
     scan.save(
         update_fields=[
             'status',
