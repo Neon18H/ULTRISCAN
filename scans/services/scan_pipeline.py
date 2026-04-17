@@ -96,8 +96,8 @@ HEADER_INTERPRETATION_RULES = {
 
 WEB_APPSEC_PRESETS = {
     'low': {'rate_limit': 2, 'concurrency': 1, 'max_depth': 2, 'max_endpoints': 120, 'module_timeout': 120},
-    'medium': {'rate_limit': 6, 'concurrency': 2, 'max_depth': 3, 'max_endpoints': 400, 'module_timeout': 240},
-    'high': {'rate_limit': 12, 'concurrency': 4, 'max_depth': 5, 'max_endpoints': 1000, 'module_timeout': 420},
+    'medium': {'rate_limit': 4, 'concurrency': 2, 'max_depth': 3, 'max_endpoints': 320, 'module_timeout': 180},
+    'high': {'rate_limit': 8, 'concurrency': 3, 'max_depth': 4, 'max_endpoints': 700, 'module_timeout': 300},
 }
 
 
@@ -330,6 +330,7 @@ class ScanPipelineService:
         whatweb_signals: list[str] = []
         appsec_requested = self._resolve_web_appsec_configuration(scan, scan_type)
         appsec_controls = appsec_requested.get('controls', {})
+        web_scan_controls = self._resolve_web_scan_controls(scan=scan, scan_type=scan_type, appsec_controls=appsec_controls)
 
         self._notify_progress('http_probe', 15, 'Validando conectividad HTTP/S')
         normalized_target, probe_result = self._resolve_web_target(raw_target)
@@ -362,7 +363,7 @@ class ScanPipelineService:
         }
         dependency_checks = {
             'whatweb': {'available': tool_presence['whatweb'], 'required': True},
-            'nuclei': {'available': tool_presence['nuclei'], 'required': scan_type in {'web_full', 'web_misconfig'}},
+            'nuclei': {'available': tool_presence['nuclei'], 'required': scan_type in {'web_full', 'web_misconfig', 'web_appsec'}},
             'gobuster': {'available': tool_presence['gobuster'], 'required': False},
             'ffuf': {'available': tool_presence['ffuf'], 'required': False},
             'katana': {'available': tool_presence['katana'], 'required': scan_type in {'web_full', 'web_appsec'}},
@@ -375,7 +376,7 @@ class ScanPipelineService:
             'httpx': {'available': tool_presence['httpx'], 'required': scan_type == 'web_appsec'},
             'sqlmap': {'available': tool_presence['sqlmap'], 'required': scan_type == 'web_appsec' and 'sqli' in appsec_requested.get('modules', [])},
             'dalfox': {'available': tool_presence['dalfox'], 'required': scan_type == 'web_appsec' and 'xss' in appsec_requested.get('modules', [])},
-            'zap-baseline.py': {'available': tool_presence['zap-baseline.py'], 'required': False},
+            'zap-baseline.py': {'available': tool_presence['zap-baseline.py'], 'required': scan_type == 'web_appsec' and 'misconfig' in appsec_requested.get('modules', [])},
             'dirsearch': {'available': tool_presence['dirsearch'], 'required': False},
         }
         tools_available = sorted([tool for tool, is_available in tool_presence.items() if is_available])
@@ -406,6 +407,11 @@ class ScanPipelineService:
                 return False
             elif result.return_code != 0:
                 details = self._summarize_output(result.stderr or result.stdout, 220)
+                if tool_name == 'nuclei' and 'failed to create new os thread' in (result.stderr or '').lower():
+                    details = (
+                        'Nuclei alcanzó límite de hilos/procesos del contenedor. '
+                        'Se aplicaron límites defensivos; revisar recursos del worker o reducir preset.'
+                    )
                 tools_failed.append(
                     {
                         'tool': tool_name,
@@ -554,7 +560,7 @@ class ScanPipelineService:
                 endpoints_by_status = {}
 
         if scan_type in {'web_full', 'web_appsec'}:
-            katana_res = self.run_katana(target)
+            katana_res = self.run_katana(target, controls=web_scan_controls)
             if _record_module('katana', katana_res, required=scan_type == 'web_appsec'):
                 katana_endpoints = parse_katana_output(katana_res.stdout)
                 if katana_endpoints:
@@ -578,6 +584,13 @@ class ScanPipelineService:
                         },
                     )
 
+        max_endpoints = int(web_scan_controls.get('max_endpoints') or WEB_APPSEC_PRESETS['medium']['max_endpoints'])
+        if len(endpoints) > max_endpoints:
+            endpoints = endpoints[:max_endpoints]
+            warnings.append(
+                f'Se limitaron endpoints a {max_endpoints} por configuración operativa ({scan_type}).'
+            )
+
         interpreted_headers = self._interpret_headers(headers)
 
         # 3) Vulnerabilidades
@@ -596,7 +609,7 @@ class ScanPipelineService:
                     f'No nuclei templates found in: {", ".join(self._nuclei_template_candidates())}',
                 )
             else:
-                nuclei_res = self.run_nuclei(target, nuclei_templates, scan_type=scan_type)
+                nuclei_res = self.run_nuclei(target, nuclei_templates, scan_type=scan_type, controls=web_scan_controls)
             if _record_module('nuclei', nuclei_res, required=nuclei_required):
                 vulnerabilities.extend(parse_nuclei_json(nuclei_res.stdout))
                 RawEvidence.objects.create(
@@ -615,7 +628,8 @@ class ScanPipelineService:
                     )
 
         if scan_type in {'web_basic', 'web_full', 'web_misconfig', 'web_appsec'}:
-            nikto_res = self.external_runner.run('nikto', ['-h', target, '-Format', 'txt'])
+            nikto_timeout = int(web_scan_controls.get('module_timeout') or WEB_APPSEC_PRESETS['medium']['module_timeout'])
+            nikto_res = self.external_runner.run('nikto', ['-h', target, '-Format', 'txt'], timeout=nikto_timeout)
             if _record_module('nikto', nikto_res, required=scan_type == 'web_misconfig'):
                 vulnerabilities.extend(parse_nikto_text(nikto_res.stdout))
                 RawEvidence.objects.create(
@@ -637,7 +651,7 @@ class ScanPipelineService:
                 endpoints=endpoints,
                 scan=scan,
                 appsec_configuration=appsec_requested,
-                controls=appsec_controls,
+                controls=web_scan_controls,
                 tools_presence=tool_presence,
                 record_module=_record_module,
                 warnings=warnings,
@@ -904,7 +918,8 @@ class ScanPipelineService:
                 'sensitive_endpoints': appsec_sensitive_endpoints if scan_type == 'web_appsec' else [],
                 'aggressiveness': appsec_requested.get('aggressiveness'),
                 'modules_selected': appsec_requested.get('modules', []),
-                'scan_controls': appsec_controls,
+                'scan_controls': web_scan_controls,
+                'scan_preset': web_scan_controls.get('preset', appsec_requested.get('aggressiveness', 'medium')),
             },
         }
         command_executed = '; '.join(
@@ -926,6 +941,21 @@ class ScanPipelineService:
         controls['exclude_paths'] = [str(v).strip() for v in controls.get('exclude_paths', []) if str(v).strip()]
         controls['allowlist_domains'] = [str(v).strip().lower() for v in controls.get('allowlist_domains', []) if str(v).strip()]
         return {'aggressiveness': aggressiveness, 'modules': modules, 'controls': controls}
+
+    def _resolve_web_scan_controls(self, *, scan: ScanExecution, scan_type: str, appsec_controls: dict[str, Any]) -> dict[str, Any]:
+        metadata = (scan.engine_metadata or {}).get('web_scan') or {}
+        defaults = WEB_APPSEC_PRESETS['medium'].copy()
+        raw_controls = metadata.get('controls') if isinstance(metadata, dict) else {}
+        controls = {**defaults, **(raw_controls or {})}
+        if scan_type == 'web_appsec':
+            controls = {**controls, **(appsec_controls or {})}
+        controls['preset'] = str(metadata.get('preset') or controls.get('preset') or 'medium').lower()
+        controls['rate_limit'] = max(1, int(controls.get('rate_limit') or defaults['rate_limit']))
+        controls['concurrency'] = max(1, int(controls.get('concurrency') or defaults['concurrency']))
+        controls['max_depth'] = max(1, int(controls.get('max_depth') or defaults['max_depth']))
+        controls['max_endpoints'] = max(10, int(controls.get('max_endpoints') or defaults['max_endpoints']))
+        controls['module_timeout'] = max(30, int(controls.get('module_timeout') or defaults['module_timeout']))
+        return controls
 
     def _run_web_appsec_modules(
         self,
@@ -975,7 +1005,11 @@ class ScanPipelineService:
             zap = self.external_runner.run('zap-baseline.py', ['-t', target, '-m', '1'], timeout=module_timeout)
             record_module('zap-baseline.py', zap, required=False)
         elif 'misconfig' in modules and not tools_presence.get('zap-baseline.py'):
-            warnings.append('OWASP ZAP baseline no está disponible; se omite control adicional.')
+            warnings.append(
+                'OWASP ZAP baseline no está disponible en esta imagen ligera del worker; '
+                'se mantiene fallback con Nikto + Nuclei misconfig.'
+            )
+            tools_skipped.append({'tool': 'zap-baseline.py', 'reason': 'missing_binary', 'required': False})
 
         findings_by_family = {
             'xss': [v for v in vulns if v.get('type') == 'dalfox'],
@@ -1135,7 +1169,11 @@ class ScanPipelineService:
             ],
         )
 
-    def run_katana(self, target: str):
+    def run_katana(self, target: str, *, controls: dict[str, Any] | None = None):
+        controls = controls or {}
+        depth = str(controls.get('max_depth') or os.environ.get('KATANA_DEPTH', '2'))
+        concurrency = str(controls.get('concurrency') or os.environ.get('KATANA_CONCURRENCY', '2'))
+        rate_limit = str(controls.get('rate_limit') or os.environ.get('KATANA_RATE_LIMIT', '4'))
         return self.external_runner.run(
             'katana',
             [
@@ -1144,25 +1182,29 @@ class ScanPipelineService:
                 '-jsonl',
                 '-silent',
                 '-d',
-                os.environ.get('KATANA_DEPTH', '2'),
+                depth,
                 '-c',
-                os.environ.get('KATANA_CONCURRENCY', '2'),
+                concurrency,
                 '-rl',
-                os.environ.get('KATANA_RATE_LIMIT', '4'),
+                rate_limit,
                 '-timeout',
                 os.environ.get('KATANA_TIMEOUT', '8'),
             ],
-            timeout=int(os.environ.get('KATANA_TOOL_TIMEOUT', '120')),
+            timeout=int(controls.get('module_timeout') or os.environ.get('KATANA_TOOL_TIMEOUT', '120')),
         )
 
-    def run_nuclei(self, target: str, templates_path: Path, *, scan_type: str = 'web_basic'):
+    def run_nuclei(self, target: str, templates_path: Path, *, scan_type: str = 'web_basic', controls: dict[str, Any] | None = None):
+        controls = controls or {}
         profile_tags = {
             'web_basic': 'misconfig,exposure',
-            'web_misconfig': 'misconfig,default-logins,exposures,ssl',
+            'web_misconfig': 'misconfig,default-logins,exposure,ssl',
             'web_full': 'misconfig,exposure,cves',
-            'web_appsec': 'xss,sqli,lfi,rce,misconfig,exposure',
+            'web_appsec': 'misconfig,xss,sqli',
             'web_api': 'api,misconfig,exposure',
         }
+        rate_limit = str(min(6, max(1, int(controls.get('rate_limit') or os.environ.get('NUCLEI_RATE_LIMIT', '2')))))
+        concurrency = str(min(2, max(1, int(controls.get('concurrency') or os.environ.get('NUCLEI_CONCURRENCY', '1')))))
+        timeout = str(min(10, max(3, int(os.environ.get('NUCLEI_TIMEOUT', '6')))))
         return self.external_runner.run(
             'nuclei',
             [
@@ -1172,19 +1214,22 @@ class ScanPipelineService:
                 '-silent',
                 '-no-color',
                 '-c',
-                os.environ.get('NUCLEI_CONCURRENCY', '1'),
+                concurrency,
                 '-rl',
-                os.environ.get('NUCLEI_RATE_LIMIT', '2'),
+                rate_limit,
                 '-bs',
-                os.environ.get('NUCLEI_BULK_SIZE', '2'),
+                '1',
                 '-timeout',
-                os.environ.get('NUCLEI_TIMEOUT', '6'),
+                timeout,
                 '-retries',
                 os.environ.get('NUCLEI_RETRIES', '0'),
                 '-max-host-error',
-                os.environ.get('NUCLEI_MAX_HOST_ERRORS', '2'),
+                '1',
+                '-tl',
+                os.environ.get('NUCLEI_TEMPLATE_THREADS', '1'),
                 '-headless-bulk-size',
                 os.environ.get('NUCLEI_HEADLESS_BULK_SIZE', '1'),
+                '-no-interactsh',
                 '-project',
                 '-disable-update-check',
                 '-tags',
@@ -1192,7 +1237,7 @@ class ScanPipelineService:
                 '-t',
                 str(templates_path),
             ],
-            timeout=int(os.environ.get('NUCLEI_TOOL_TIMEOUT', '180')),
+            timeout=int(controls.get('module_timeout') or os.environ.get('NUCLEI_TOOL_TIMEOUT', '180')),
         )
 
     def _resolve_wordlist(self) -> tuple[str | None, str]:

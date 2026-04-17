@@ -125,6 +125,30 @@ WEB_APPSEC_AGGRESSIVENESS_CHOICES = [
     ('high', 'High'),
 ]
 
+WEB_SCAN_PRESETS = {
+    'low': {
+        'rate_limit': 2,
+        'concurrency': 1,
+        'max_depth': 2,
+        'max_endpoints': 120,
+        'module_timeout': 120,
+    },
+    'medium': {
+        'rate_limit': 4,
+        'concurrency': 2,
+        'max_depth': 3,
+        'max_endpoints': 320,
+        'module_timeout': 180,
+    },
+    'high': {
+        'rate_limit': 8,
+        'concurrency': 3,
+        'max_depth': 4,
+        'max_endpoints': 700,
+        'module_timeout': 300,
+    },
+}
+
 SCAN_TYPE_HELP = {
     'nmap_discovery': 'Descubrimiento rápido de hosts y puertos comunes.',
     'nmap_full': 'Escaneo estándar de infraestructura con detección de versiones sobre top ports.',
@@ -209,6 +233,12 @@ class CreateScanForm(forms.Form):
         self.fields['profile'].empty_label = 'Selecciona un perfil'
         if initial_asset:
             self.fields['asset'].initial = initial_asset
+        medium_defaults = WEB_SCAN_PRESETS['medium']
+        self.fields['web_rate_limit'].initial = medium_defaults['rate_limit']
+        self.fields['web_concurrency'].initial = medium_defaults['concurrency']
+        self.fields['web_max_depth'].initial = medium_defaults['max_depth']
+        self.fields['web_max_endpoints'].initial = medium_defaults['max_endpoints']
+        self.fields['web_module_timeout'].initial = medium_defaults['module_timeout']
         self.fields['scan_type'].help_text = 'Selecciona la estrategia más adecuada para el objetivo.'
         for name, field in self.fields.items():
             css = 'form-select' if isinstance(field, (forms.ModelChoiceField, forms.ChoiceField)) else 'form-control'

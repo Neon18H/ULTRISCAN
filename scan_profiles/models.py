@@ -14,6 +14,8 @@ class ScanProfile(TimeStampedModel):
     web_detection = models.BooleanField(default=False)
     light_enumeration = models.BooleanField(default=False)
     wordpress_scan = models.BooleanField(default=False)
+    web_scan_preset = models.CharField(max_length=12, default='medium')
+    web_scan_defaults = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name = 'Perfil de escaneo'

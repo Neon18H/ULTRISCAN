@@ -493,3 +493,21 @@ class WebScanPipelineTests(TestCase):
         self.assertIn('-bs', args)
         self.assertIn('-retries', args)
         self.assertIn('-tags', args)
+        self.assertIn('-tl', args)
+
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
+    def test_nuclei_command_uses_controls_when_provided(self, mocked_run):
+        mocked_run.return_value = ToolExecutionResult(tool='nuclei', command='nuclei', return_code=0, stdout='', stderr='')
+        service = ScanPipelineService()
+
+        service.run_nuclei(
+            'https://example.com',
+            Path('/tmp/nuclei-templates'),
+            controls={'rate_limit': 10, 'concurrency': 5, 'module_timeout': 90},
+        )
+
+        _tool, args = mocked_run.call_args.args[:2]
+        self.assertEqual(_tool, 'nuclei')
+        self.assertEqual(args[args.index('-c') + 1], '2')
+        self.assertEqual(args[args.index('-rl') + 1], '6')
+        self.assertEqual(mocked_run.call_args.kwargs['timeout'], 90)

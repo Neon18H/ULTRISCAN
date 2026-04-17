@@ -23,6 +23,7 @@ from .forms import (
     PROFILE_NAME_ALIASES,
     SCAN_TYPE_HELP,
     SCAN_TYPE_TO_PROFILE,
+    WEB_SCAN_PRESETS,
     WEB_APPSEC_MODULE_CHOICES,
     WEB_APPSEC_MODULE_DETAILS,
     WEB_APPSEC_MODULE_GROUPS,
@@ -132,6 +133,7 @@ class ScanCreateView(LoginRequiredMixin, TemplateView):
         context['web_appsec_module_groups'] = grouped_modules
         context['web_appsec_all_modules'] = [key for key, _ in WEB_APPSEC_MODULE_CHOICES]
         context['selected_web_appsec_modules'] = selected_modules
+        context['web_scan_presets'] = WEB_SCAN_PRESETS
         return context
 
     def post(self, request, *args, **kwargs):
@@ -150,19 +152,26 @@ class ScanCreateView(LoginRequiredMixin, TemplateView):
             messages.error(request, f'El tipo seleccionado requiere el perfil {expected_profile}.')
             return self.render_to_response(self.get_context_data(form=form))
 
+        requested_preset = (form.cleaned_data.get('web_appsec_aggressiveness') or 'medium').lower()
+        profile_preset = (profile.web_scan_preset or 'medium').lower()
+        profile_defaults = profile.web_scan_defaults if isinstance(profile.web_scan_defaults, dict) else {}
+        defaults = WEB_SCAN_PRESETS.get(profile_preset, WEB_SCAN_PRESETS['medium'])
+        effective_controls = {
+            **defaults,
+            **profile_defaults,
+            'rate_limit': form.cleaned_data.get('web_rate_limit') or profile_defaults.get('rate_limit') or defaults['rate_limit'],
+            'concurrency': form.cleaned_data.get('web_concurrency') or profile_defaults.get('concurrency') or defaults['concurrency'],
+            'max_depth': form.cleaned_data.get('web_max_depth') or profile_defaults.get('max_depth') or defaults['max_depth'],
+            'max_endpoints': form.cleaned_data.get('web_max_endpoints') or profile_defaults.get('max_endpoints') or defaults['max_endpoints'],
+            'module_timeout': form.cleaned_data.get('web_module_timeout') or profile_defaults.get('module_timeout') or defaults['module_timeout'],
+            'exclude_paths': CreateScanForm.parse_csv_field(form.cleaned_data.get('web_excluded_paths')),
+            'allowlist_domains': CreateScanForm.parse_csv_field(form.cleaned_data.get('web_allowlist_domains')),
+            'authenticated_mode': bool(form.cleaned_data.get('web_authenticated_mode')),
+        }
         appsec_configuration = {
-            'aggressiveness': form.cleaned_data.get('web_appsec_aggressiveness') or 'medium',
+            'aggressiveness': requested_preset,
             'modules': form.cleaned_data.get('web_appsec_modules') or [],
-            'controls': {
-                'rate_limit': form.cleaned_data.get('web_rate_limit'),
-                'concurrency': form.cleaned_data.get('web_concurrency'),
-                'max_depth': form.cleaned_data.get('web_max_depth'),
-                'max_endpoints': form.cleaned_data.get('web_max_endpoints'),
-                'module_timeout': form.cleaned_data.get('web_module_timeout'),
-                'exclude_paths': CreateScanForm.parse_csv_field(form.cleaned_data.get('web_excluded_paths')),
-                'allowlist_domains': CreateScanForm.parse_csv_field(form.cleaned_data.get('web_allowlist_domains')),
-                'authenticated_mode': bool(form.cleaned_data.get('web_authenticated_mode')),
-            },
+            'controls': effective_controls,
         }
 
         scan = ScanExecution.objects.create(
@@ -178,6 +187,11 @@ class ScanCreateView(LoginRequiredMixin, TemplateView):
                 'requested_scan_type': scan_type,
                 'requested_module': form.cleaned_data['module'],
                 'requested_options': form.cleaned_data['options'],
+                'web_scan': {
+                    'preset': requested_preset,
+                    'controls': effective_controls,
+                    'profile_defaults': profile_defaults,
+                },
                 'web_appsec': appsec_configuration,
             },
         )

@@ -77,6 +77,16 @@ Y versiona los archivos `*/migrations/*.py` en Git.
 docker compose up --build
 ```
 
+## Web AppSec worker tooling (Railway-friendly)
+- El worker instala herramientas web activas: `nuclei`, `httpx`, `katana`, `dalfox`, `sqlmap`, `nikto`, `whatweb`, `ffuf`, `gobuster`, `wpscan`.
+- `OWASP ZAP baseline` no se fuerza en esta imagen slim por huella de recursos; el pipeline usa fallback con `nikto + nuclei` y deja warning operativo explícito cuando falta.
+- Para estabilidad en contenedores limitados (Railway), se recomienda mantener estos límites:
+  - `NUCLEI_CONCURRENCY=1`
+  - `NUCLEI_RATE_LIMIT=2`
+  - `NUCLEI_TEMPLATE_THREADS=1`
+  - `NUCLEI_BULK_SIZE=1`
+  - `NUCLEI_MAX_HOST_ERRORS=1`
+
 ## Railway (deploy automático)
 Este mismo repositorio se despliega en **dos servicios separados** en Railway:
 
