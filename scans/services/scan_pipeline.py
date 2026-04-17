@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
+from urllib import request
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 
 from django.db import transaction
 
 from findings.models import Finding
 from integrations.parsers.nmap_parser import NmapXmlParser
 from integrations.runners.nmap_runner import NmapRunner
-from scans.engines.tooling import ExternalToolRunner
+from scans.engines.tooling import ExternalToolRunner, ToolExecutionResult
 from scans.models import RawEvidence, ScanExecution, ServiceFinding, WebFinding
 from scans.parsers.web_parsers import (
     parse_gobuster_json,
@@ -238,9 +243,10 @@ class ScanPipelineService:
             return ''
 
     def _run_web_pipeline(self, scan: ScanExecution, scan_type: str) -> ScanPipelineResult:
-        target = scan.asset.value
+        raw_target = scan.asset.value
         modules: dict[str, Any] = {}
         tools_executed: list[str] = []
+        tools_failed: list[dict[str, Any]] = []
         tools_skipped: list[dict[str, Any]] = []
         warnings: list[str] = []
         dependency_checks: dict[str, Any] = {}
@@ -251,6 +257,20 @@ class ScanPipelineService:
         headers: dict[str, str] = {}
         cms = ''
         fingerprint_detected = False
+
+        normalized_target, probe_result = self._resolve_web_target(raw_target)
+        target = normalized_target
+        headers.update(probe_result.get('headers') or {})
+        modules['http_probe'] = probe_result
+        if not probe_result.get('ok'):
+            raise ScanPipelineExecutionError(
+                f'El target web "{raw_target}" no respondió por HTTP(S) tras normalización.',
+                command=probe_result.get('command', ''),
+                stdout='',
+                stderr=probe_result.get('error', ''),
+                retryable=False,
+                reason='web_target_unreachable',
+            )
 
         tool_presence = {
             'whatweb': self.external_runner.is_available('whatweb'),
@@ -287,16 +307,20 @@ class ScanPipelineService:
                     warnings.append(reason)
                 tools_skipped.append({'tool': tool_name, 'reason': 'missing_binary', 'required': required})
                 return False
-            tools_executed.append(tool_name)
             if result.timed_out:
+                tools_failed.append({'tool': tool_name, 'return_code': result.return_code, 'timed_out': True})
                 warnings.append(f'{tool_name} excedió el timeout configurado.')
+                return False
             elif result.return_code != 0:
+                tools_failed.append({'tool': tool_name, 'return_code': result.return_code, 'timed_out': False})
                 warnings.append(f'{tool_name} terminó con código {result.return_code}.')
+                return False
+            tools_executed.append(tool_name)
             return True
 
         # 1) Fingerprinting
-        whatweb = self.external_runner.run('whatweb', ['--log-json=-', target])
-        if _record_module('whatweb', whatweb):
+        whatweb = self.run_whatweb(target)
+        if _record_module('whatweb', whatweb, required=True):
             ww_payload = parse_whatweb_json(whatweb.stdout)
             plugins = ww_payload.get('plugins') if isinstance(ww_payload, dict) else {}
             if isinstance(plugins, dict):
@@ -304,6 +328,10 @@ class ScanPipelineService:
                 fingerprint_detected = bool(plugins)
                 if 'HTTPServer' in plugins and isinstance(plugins['HTTPServer'], dict):
                     headers.update(plugins['HTTPServer'])
+                if 'X-Powered-By' in plugins and isinstance(plugins['X-Powered-By'], dict):
+                    headers.update({'X-Powered-By': str(plugins['X-Powered-By'])})
+                if 'WordPress' in plugins:
+                    cms = 'wordpress'
             RawEvidence.objects.create(
                 organization=scan.organization,
                 scan_execution=scan,
@@ -329,13 +357,14 @@ class ScanPipelineService:
             tools_skipped.append({'tool': preferred_enum_tool, 'reason': 'missing_binary', 'required': False})
             tools_skipped.append({'tool': fallback_enum_tool, 'reason': 'missing_binary', 'required': False})
             skip_enumeration = True
-        enum_args = (
-            ['-u', f'{target}/FUZZ', '-w', '/usr/share/wordlists/dirb/common.txt', '-json']
-            if enum_tool == 'ffuf'
-            else ['dir', '-u', target, '-w', '/usr/share/wordlists/dirb/common.txt', '-o', '/dev/stdout', '--format', 'json']
-        )
         if not skip_enumeration:
-            enum_res = self.external_runner.run(enum_tool, enum_args)
+            wordlist, wordlist_warning = self._resolve_wordlist()
+            if wordlist_warning:
+                warnings.append(wordlist_warning)
+            if wordlist:
+                enum_res = self.run_ffuf(target, wordlist) if enum_tool == 'ffuf' else self.run_gobuster(target, wordlist)
+            else:
+                enum_res = self._missing_dependency_result(enum_tool, 'No wordlist disponible para enumeración web.')
             if _record_module(enum_tool, enum_res):
                 if enum_tool == 'ffuf':
                     for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
@@ -358,7 +387,13 @@ class ScanPipelineService:
 
         # 3) Vulnerabilidades
         nuclei_required = scan_type == 'web_full'
-        nuclei_res = self.external_runner.run('nuclei', ['-u', target, '-jsonl', '-silent'])
+        nuclei_templates = self._resolve_nuclei_templates()
+        if not nuclei_templates:
+            warnings.append('No se encontraron templates de nuclei; se omite escaneo nuclei.')
+            tools_skipped.append({'tool': 'nuclei', 'reason': 'missing_templates', 'required': nuclei_required})
+            nuclei_res = self._missing_dependency_result('nuclei', 'No nuclei templates found')
+        else:
+            nuclei_res = self.run_nuclei(target, nuclei_templates)
         if _record_module('nuclei', nuclei_res, required=nuclei_required):
             vulnerabilities.extend(parse_nuclei_json(nuclei_res.stdout))
             RawEvidence.objects.create(
@@ -368,8 +403,13 @@ class ScanPipelineService:
                 host=target,
                 payload={'vulnerabilities': [v for v in vulnerabilities if v.get('type') == 'nuclei']},
                 raw_output=nuclei_res.stdout,
-                metadata={'stderr': nuclei_res.stderr, 'command': nuclei_res.command, 'scan_type': scan_type},
-            )
+                    metadata={
+                        'stderr': nuclei_res.stderr,
+                        'command': nuclei_res.command,
+                        'scan_type': scan_type,
+                        'templates_path': str(nuclei_templates),
+                    },
+                )
 
         nikto_res = self.external_runner.run('nikto', ['-h', target, '-Format', 'txt'])
         if _record_module('nikto', nikto_res):
@@ -496,6 +536,7 @@ class ScanPipelineService:
             'tools': tools_executed,
             'tools_available': tools_available,
             'tools_executed': tools_executed,
+            'tools_failed': tools_failed,
             'tools_skipped': tools_skipped,
             'dependency_checks': dependency_checks,
             'warnings': warnings,
@@ -504,19 +545,24 @@ class ScanPipelineService:
             'endpoints_count': len(endpoints),
             'vulnerabilities_count': len(vulnerabilities),
             'cms': cms,
+            'target': target,
         }
         metadata = {
             'pipeline': 'web',
             'modules': modules,
             'structured_results': {
+                'target': target,
+                'http_probe': probe_result,
                 'scan_type': scan_type,
                 'technologies': sorted(technologies),
                 'endpoints': endpoints,
                 'vulnerabilities': vulnerabilities,
                 'headers': headers,
                 'cms': cms,
+                'fingerprint': parse_whatweb_json(modules.get('whatweb', {}).get('stdout', '') if modules.get('whatweb') else ''),
                 'tools_available': tools_available,
                 'tools_executed': tools_executed,
+                'tools_failed': tools_failed,
                 'tools_skipped': tools_skipped,
                 'dependency_checks': dependency_checks,
                 'warnings': warnings,
@@ -524,7 +570,121 @@ class ScanPipelineService:
                 'fingerprint_detected': fingerprint_detected,
             },
         }
-        command_executed = ' && '.join(
+        command_executed = '; '.join(
             module['command'] for module in modules.values() if isinstance(module, dict) and module.get('command')
         )
         return ScanPipelineResult(summary=summary, command_executed=command_executed, engine_metadata=metadata)
+
+    def _resolve_web_target(self, raw_target: str) -> tuple[str, dict[str, Any]]:
+        candidate_urls: list[str]
+        parsed = urlparse(raw_target)
+        if parsed.scheme:
+            candidate_urls = [raw_target]
+        else:
+            stripped = raw_target.strip().strip('/')
+            candidate_urls = [f'https://{stripped}', f'http://{stripped}']
+
+        errors: list[str] = []
+        for url in candidate_urls:
+            probe = self._probe_http_target(url)
+            if probe['ok']:
+                return url, probe
+            errors.append(f'{url}: {probe.get("error", "unknown error")}')
+
+        return candidate_urls[0], {
+            'ok': False,
+            'status_code': None,
+            'headers': {},
+            'error': '; '.join(errors),
+            'command': f'http_probe {", ".join(candidate_urls)}',
+        }
+
+    def _probe_http_target(self, target: str, timeout: int = 8) -> dict[str, Any]:
+        user_agent = {'User-Agent': 'ULTRISCAN/1.0'}
+        for method in ('HEAD', 'GET'):
+            req = request.Request(target, method=method, headers=user_agent)
+            try:
+                with request.urlopen(req, timeout=timeout) as response:
+                    return {
+                        'ok': True,
+                        'method': method,
+                        'status_code': response.getcode(),
+                        'headers': {k: v for k, v in response.headers.items()},
+                        'error': '',
+                        'command': f'HTTP {method} {target}',
+                    }
+            except HTTPError as exc:
+                return {
+                    'ok': True,
+                    'method': method,
+                    'status_code': exc.code,
+                    'headers': {k: v for k, v in exc.headers.items()} if exc.headers else {},
+                    'error': f'HTTP {exc.code}',
+                    'command': f'HTTP {method} {target}',
+                }
+            except URLError as exc:
+                error = str(exc.reason)
+            except Exception as exc:  # noqa: BLE001
+                error = str(exc)
+            if method == 'GET':
+                return {
+                    'ok': False,
+                    'method': method,
+                    'status_code': None,
+                    'headers': {},
+                    'error': error,
+                    'command': f'HTTP {method} {target}',
+                }
+        return {'ok': False, 'method': 'GET', 'status_code': None, 'headers': {}, 'error': 'probe failed', 'command': ''}
+
+    def run_whatweb(self, target: str):
+        return self.external_runner.run('whatweb', ['--log-json=-', target])
+
+    def run_gobuster(self, target: str, wordlist: str):
+        return self.external_runner.run(
+            'gobuster',
+            ['dir', '-u', target, '-w', wordlist, '-o', '/dev/stdout', '--format', 'json', '-k'],
+        )
+
+    def run_ffuf(self, target: str, wordlist: str):
+        return self.external_runner.run('ffuf', ['-u', f'{target.rstrip("/")}/FUZZ', '-w', wordlist, '-json'])
+
+    def run_nuclei(self, target: str, templates_path: Path):
+        return self.external_runner.run('nuclei', ['-u', target, '-jsonl', '-silent', '-t', str(templates_path)])
+
+    def _resolve_wordlist(self) -> tuple[str | None, str]:
+        candidates = [
+            Path('/usr/share/wordlists/dirb/common.txt'),
+            Path('/usr/share/seclists/Discovery/Web-Content/common.txt'),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate), ''
+        return None, 'No se encontró wordlist de enumeración; se omite gobuster/ffuf.'
+
+    def _resolve_nuclei_templates(self) -> Path | None:
+        env_raw = os.environ.get('NUCLEI_TEMPLATES', '').strip()
+        env_path = Path(env_raw) if env_raw else None
+        candidates = [env_path] if env_path else []
+        candidates.extend(
+            [
+                Path.home() / 'nuclei-templates',
+                Path('/root/nuclei-templates'),
+                Path('/usr/local/nuclei-templates'),
+                Path('/opt/nuclei-templates'),
+            ]
+        )
+        for candidate in candidates:
+            if candidate and candidate.exists() and candidate.is_dir():
+                return candidate
+        return None
+
+    def _missing_dependency_result(self, tool: str, reason: str):
+        return ToolExecutionResult(
+            tool=tool,
+            command=tool,
+            return_code=2,
+            stdout='',
+            stderr=reason,
+            missing_binary=False,
+        )

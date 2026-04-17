@@ -10,7 +10,8 @@ def parse_whatweb_json(raw_output: str) -> dict:
     try:
         payload = json.loads(raw_output)
         if isinstance(payload, list) and payload:
-            return payload[0]
+            first = payload[0]
+            return first if isinstance(first, dict) else {}
         if isinstance(payload, dict):
             return payload
     except json.JSONDecodeError:
@@ -22,7 +23,7 @@ def parse_gobuster_json(raw_output: str) -> list[dict]:
     rows = parse_json_lines(raw_output)
     endpoints: list[dict] = []
     for row in rows:
-        path = row.get('path') or row.get('url') or ''
+        path = row.get('path') or row.get('url') or row.get('input') or ''
         status = row.get('status') or row.get('status_code')
         if path:
             endpoints.append({'path': path, 'status_code': status})
@@ -34,14 +35,18 @@ def parse_nuclei_json(raw_output: str) -> list[dict]:
     vulns: list[dict] = []
     for row in rows:
         info = row.get('info') or {}
+        references = info.get('reference') or info.get('references') or []
+        if isinstance(references, str):
+            references = [references]
         vulns.append(
             {
                 'template_id': row.get('template-id', ''),
                 'name': info.get('name', row.get('matcher-name', 'Nuclei finding')),
                 'severity': (info.get('severity') or 'medium').lower(),
                 'description': info.get('description', ''),
-                'reference': (info.get('reference') or [''])[0] if isinstance(info.get('reference'), list) else '',
+                'reference': references[0] if references else '',
                 'matched_at': row.get('matched-at', ''),
+                'template_path': row.get('template', ''),
                 'type': 'nuclei',
             }
         )

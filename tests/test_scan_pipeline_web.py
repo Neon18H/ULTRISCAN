@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -18,6 +19,30 @@ class WebScanPipelineTests(TestCase):
         self.org = Organization.objects.create(name='Web Pipeline Org', slug='web-pipeline-org')
         self.asset = Asset.objects.create(organization=self.org, name='Web Target', asset_type='url', value='https://example.com')
         self.profile = ScanProfile.objects.create(organization=self.org, name='web_basic')
+        self._target_patch = patch(
+            'scans.services.scan_pipeline.ScanPipelineService._resolve_web_target',
+            return_value=(
+                'https://example.com',
+                {'ok': True, 'status_code': 200, 'headers': {'Server': 'nginx'}, 'command': 'HTTP GET https://example.com'},
+            ),
+        )
+        self._templates_patch = patch(
+            'scans.services.scan_pipeline.ScanPipelineService._resolve_nuclei_templates',
+            return_value=Path('/tmp/nuclei-templates'),
+        )
+        self._wordlist_patch = patch(
+            'scans.services.scan_pipeline.ScanPipelineService._resolve_wordlist',
+            return_value=('/tmp/common.txt', ''),
+        )
+        self._target_patch.start()
+        self._templates_patch.start()
+        self._wordlist_patch.start()
+
+    def tearDown(self):
+        self._wordlist_patch.stop()
+        self._templates_patch.stop()
+        self._target_patch.stop()
+        super().tearDown()
 
     @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
     @patch('scans.services.scan_pipeline.ExternalToolRunner.is_available')
@@ -245,3 +270,36 @@ class WebScanPipelineTests(TestCase):
         self.assertNotIn('wpscan', result.summary['tools_executed'])
         self.assertIn('whatweb', result.summary['tools_available'])
         self.assertNotIn('wpscan', result.summary['tools_available'])
+
+    @patch('scans.services.scan_pipeline.ScanPipelineService._probe_http_target')
+    def test_target_normalization_without_scheme_prefers_https(self, mocked_probe):
+        mocked_probe.side_effect = [
+            {'ok': True, 'status_code': 200, 'headers': {'Server': 'nginx'}, 'command': 'HTTP HEAD https://example.org'},
+        ]
+        service = ScanPipelineService()
+
+        normalized, probe = service._resolve_web_target('example.org')
+
+        self.assertEqual(normalized, 'https://example.org')
+        self.assertTrue(probe['ok'])
+
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.is_available', return_value=True)
+    @patch('scans.services.scan_pipeline.ScanPipelineService._resolve_web_target')
+    def test_web_scan_fails_early_when_target_is_unreachable(self, mocked_resolve_target, mocked_is_available):
+        mocked_resolve_target.return_value = (
+            'https://down.example.org',
+            {'ok': False, 'status_code': None, 'headers': {}, 'error': 'timeout', 'command': 'HTTP GET'},
+        )
+
+        scan = ScanExecution.objects.create(
+            organization=self.org,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            engine_metadata={'requested_scan_type': 'web_basic'},
+        )
+
+        with self.assertRaises(ScanPipelineExecutionError) as exc:
+            ScanPipelineService().execute(scan)
+
+        self.assertEqual(exc.exception.reason, 'web_target_unreachable')
