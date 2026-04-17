@@ -3,7 +3,7 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
-from findings.services import correlate_scan_execution
+from findings.services import correlate_scan_execution, enrich_findings_with_ai
 
 from .models import ScanExecution
 from .services.scan_pipeline import INFRA_SCAN_TYPES, WEB_SCAN_TYPES, ScanPipelineExecutionError, ScanPipelineService
@@ -133,6 +133,8 @@ def _run_pipeline(*, scan_execution_id: int, expected: str) -> None:
         _update_progress(scan, percent=90, stage='correlation', status_message='Correlacionando hallazgos')
 
         findings = correlate_scan_execution(scan)
+        _update_progress(scan, percent=94, stage='enrichment', status_message='Enriqueciendo findings con IA')
+        enrich_findings_with_ai(findings)
         _update_progress(scan, percent=97, stage='reporting', status_message='Generando resumen operativo')
         summary = {**result.summary, 'findings': len(findings), 'services': scan.service_findings.count()}
         scan.summary = summary

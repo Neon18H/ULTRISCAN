@@ -15,7 +15,32 @@
   <div class="col-xl-8">
     <div class="surface-card p-3 p-xl-4 mb-3">
       {% include 'includes/section_header.html' with eyebrow='Summary' title='Resumen del finding' %}
+      <div class="badge text-bg-light border mb-2">Dato técnico base</div>
       <p class="mb-0">{{ object.description|default:'Sin descripción disponible.' }}</p>
+    </div>
+
+    <div class="surface-card p-3 p-xl-4 mb-3 border border-primary-subtle">
+      {% include 'includes/section_header.html' with eyebrow='AI enrichment' title='Enriquecimiento IA (no fuente primaria)' %}
+      {% if object.ai_enrichment %}
+      <div class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle mb-2">Capa IA</div>
+      <p class="mb-2"><strong>Resumen IA:</strong> {{ object.ai_summary|default:ai_context.evidence_summary|default:'Sin resumen IA.' }}</p>
+      <p class="mb-2"><strong>Impacto:</strong> {{ object.ai_impact|default:ai_context.impact_summary|default:'Sin impacto enriquecido.' }}</p>
+      <p class="mb-2"><strong>Prioridad razonada:</strong> {{ object.ai_priority_reason|default:ai_context.priority_reason|default:'Sin razonamiento de prioridad.' }}</p>
+      <p class="mb-2"><strong>Exploit availability note:</strong> {{ ai_context.exploit_context|default:'No definido por IA.' }}</p>
+      <p class="mb-2"><strong>Remediación enriquecida:</strong> {{ object.ai_remediation|default:ai_context.remediation|default:'Sin remediación IA.' }}</p>
+      <div class="small text-muted">
+        OWASP: {{ object.ai_owasp_category|default:ai_context.owasp_category|default:'-' }} ·
+        CWE: {{ object.ai_cwe|default:ai_context.cwe|default:'-' }} ·
+        Confidence IA: {{ object.ai_confidence|default:ai_context.confidence|default:'-' }}
+      </div>
+      {% if ai_context.insufficient_evidence %}
+      <div class="alert alert-warning border mt-3 mb-0">
+        <i class="bi bi-exclamation-triangle me-1"></i>La IA marcó evidencia insuficiente para afirmar vulnerabilidad concluyente.
+      </div>
+      {% endif %}
+      {% else %}
+      <p class="text-muted mb-0">Aún no hay enriquecimiento IA para este finding.</p>
+      {% endif %}
     </div>
 
     <div class="surface-card p-3 p-xl-4 mb-3">

@@ -44,6 +44,16 @@ class Finding(TimeStampedModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
     analyst_notes = models.TextField(blank=True)
     correlation_trace = models.JSONField(default=dict, blank=True)
+    ai_title = models.CharField(max_length=255, blank=True)
+    ai_summary = models.TextField(blank=True)
+    ai_impact = models.TextField(blank=True)
+    ai_remediation = models.TextField(blank=True)
+    ai_priority_reason = models.TextField(blank=True)
+    ai_confidence = models.CharField(max_length=20, blank=True)
+    ai_tags = models.JSONField(default=list, blank=True)
+    ai_owasp_category = models.CharField(max_length=120, blank=True)
+    ai_cwe = models.CharField(max_length=80, blank=True)
+    ai_enrichment = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ['-created_at']
