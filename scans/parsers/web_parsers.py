@@ -54,6 +54,18 @@ def parse_whatweb_json(raw_output: str) -> dict:
                 return normalized
         except json.JSONDecodeError:
             continue
+    # Fallback para salidas no-JSON (ej. formato texto de WhatWeb)
+    plugins: dict[str, dict] = {}
+    text = raw
+    if text:
+        # Ejemplo: "X-Powered-By[PHP/8.2.1], HTTPServer[nginx]"
+        for match in re.finditer(r'([A-Za-z0-9._\-+\/ ]+)\[([^\]]*)\]', text):
+            plugin = match.group(1).strip()
+            details = match.group(2).strip()
+            if plugin:
+                plugins[plugin] = {'string': [details]} if details else {}
+    if plugins:
+        return {'plugins': plugins}
     return {}
 
 

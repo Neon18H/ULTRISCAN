@@ -138,6 +138,7 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         if not isinstance(self.object.engine_metadata, dict):
             logger.warning('Scan %s has non-dict engine_metadata payload. Falling back to empty dict.', self.object.id)
         structured_results = self._as_dict(engine_metadata.get('structured_results'))
+        scan_category = structured_results.get('category') or summary.get('category') or engine_metadata.get('pipeline') or 'infra'
         tools = self._as_dict(structured_results.get('tools'))
         modules = self._as_dict(engine_metadata.get('modules'))
 
@@ -194,6 +195,27 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         endpoints_by_source = self._as_dict(structured_results.get('endpoints_by_source'))
         deduped_evidences = self._dedupe_evidences()
         deduped_findings = self._dedupe_findings()
+        service_findings = list(self.object.service_findings.all())
+        open_ports = sorted({service.port for service in service_findings if service.port})
+        services_by_name = {}
+        for service in service_findings:
+            key = service.service or 'unknown'
+            services_by_name[key] = services_by_name.get(key, 0) + 1
+        top_services = sorted(services_by_name.items(), key=lambda row: (-row[1], row[0]))[:8]
+        versions_detected = sorted(
+            {
+                f"{service.product} {service.normalized_version or service.raw_version}".strip()
+                for service in service_findings
+                if service.product or service.normalized_version or service.raw_version
+            }
+        )
+        infra_kpis = {
+            'open_ports': len(open_ports),
+            'services_detected': len(service_findings),
+            'products_detected': len({service.product for service in service_findings if service.product}),
+            'versions_detected': len(versions_detected),
+            'findings_detected': len(deduped_findings),
+        }
         headers_analysis = {
             'present': protections_present,
             'absent': protections_absent,
@@ -218,6 +240,7 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
 
         return {
             'summary': summary,
+            'scan_category': scan_category,
             'engine_metadata': engine_metadata,
             'structured_results': structured_results,
             'tools': tools,
@@ -244,6 +267,11 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             'deduped_evidences': deduped_evidences,
             'deduped_findings': deduped_findings,
             'status_label': self._build_status_label(summary),
+            'service_findings': service_findings,
+            'open_ports': open_ports,
+            'top_services': top_services,
+            'versions_detected': versions_detected,
+            'infra_kpis': infra_kpis,
         }
 
     def _dedupe_findings(self):
