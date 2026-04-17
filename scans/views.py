@@ -190,6 +190,7 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         metadata = self._as_dict(structured_results.get('metadata'))
         redirects = self._as_list(structured_results.get('redirects'))
         web_basic_findings = self._as_list(structured_results.get('web_findings_basic'))
+        web_findings = self._as_list(structured_results.get('web_findings'))
         web_kpis = self._as_dict(structured_results.get('web_kpis'))
         vulnerabilities_by_severity = self._as_dict(structured_results.get('vulnerabilities_by_severity'))
         endpoints_by_source = self._as_dict(structured_results.get('endpoints_by_source'))
@@ -236,7 +237,11 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
                 'controls_present': headers_analysis['summary']['present'],
                 'controls_absent': headers_analysis['summary']['absent'],
                 'severity_aggregate': vulnerabilities_by_severity,
+                'score': max(0, 100 - (len(vulnerabilities) * 5)),
+                'kpi_blocks': [],
             }
+        if not web_findings:
+            web_findings = web_basic_findings
 
         return {
             'summary': summary,
@@ -261,6 +266,7 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             'metadata': metadata,
             'redirects': redirects,
             'web_basic_findings': web_basic_findings,
+            'web_findings': web_findings,
             'web_kpis': web_kpis,
             'vulnerabilities_by_severity': vulnerabilities_by_severity,
             'endpoints_by_source': endpoints_by_source,

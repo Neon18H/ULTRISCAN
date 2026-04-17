@@ -11,6 +11,7 @@ SCAN_TYPE_CHOICES = [
     ('nmap_services', 'Infra Services (Compat)'),
     ('web_basic', 'Web Basic'),
     ('web_full', 'Web Full'),
+    ('web_appsec', 'Web AppSec'),
     ('web_wordpress', 'Web WordPress'),
     ('web_api', 'Web API'),
 ]
@@ -22,6 +23,7 @@ SCAN_TYPE_HELP = {
     'nmap_services': 'Compatibilidad legacy: usa el perfil estándar de infraestructura.',
     'web_basic': 'Pipeline web base tolerante: fingerprint, headers y checks básicos con fallback.',
     'web_full': 'Pipeline web extendido con mayor enumeración y validaciones adicionales.',
+    'web_appsec': 'Pipeline web orientado a appsec (hardening + crawling + templates appsec).',
     'web_wordpress': 'Pipeline web con detección CMS y ejecución WordPress cuando aplique.',
     'web_api': 'Pipeline orientado a superficie API y endpoints dinámicos.',
 }
@@ -33,11 +35,12 @@ SCAN_TYPE_TO_PROFILE = {
     'nmap_services': 'infra_standard',
     'web_basic': 'web_basic',
     'web_full': 'web_basic',
+    'web_appsec': 'web_basic',
     'web_wordpress': 'wordpress',
     'web_api': 'web_basic',
 }
 
-WEB_ONLY_SCAN_TYPES = {'web_basic', 'web_full', 'web_wordpress', 'web_api'}
+WEB_ONLY_SCAN_TYPES = {'web_basic', 'web_full', 'web_appsec', 'web_wordpress', 'web_api'}
 PROFILE_NAME_ALIASES = {
     'infra_standard': {'infra_standard', 'full_tcp_safe'},
     'infra_deep': {'infra_deep', 'full'},
@@ -107,6 +110,7 @@ class CreateScanForm(forms.Form):
             'nmap_services': 'nmap',
             'web_basic': 'whatweb+gobuster+nikto',
             'web_full': 'whatweb+ffuf+nuclei+nikto',
+            'web_appsec': 'whatweb+ffuf+katana+nuclei+nikto',
             'web_wordpress': 'whatweb+nuclei+wpscan',
             'web_api': 'whatweb+ffuf+nuclei',
         }
