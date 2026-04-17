@@ -111,6 +111,7 @@ class AIFindingEnrichmentServiceTests(TestCase):
         self.finding.refresh_from_db()
         self.assertEqual(self.finding.ai_enrichment.get('status'), 'skipped')
         self.assertIn('OpenRouter no configurado', self.finding.ai_enrichment.get('status_message', ''))
+        self.assertIsNone(self.finding.ai_generated_at)
 
     @override_settings(
         OPENROUTER_API_KEY='test-key',
@@ -143,6 +144,7 @@ class AIFindingEnrichmentServiceTests(TestCase):
         self.assertEqual(self.finding.ai_cwe, 'CWE-79')
         self.assertEqual(self.finding.ai_enrichment.get('insufficient_evidence'), False)
         self.assertEqual(self.finding.ai_enrichment.get('status'), 'success')
+        self.assertIsNotNone(self.finding.ai_generated_at)
 
     @override_settings(
         OPENROUTER_API_KEY='test-key',
@@ -160,3 +162,4 @@ class AIFindingEnrichmentServiceTests(TestCase):
         self.finding.refresh_from_db()
         self.assertEqual(self.finding.ai_enrichment.get('status'), 'error')
         self.assertEqual(self.finding.ai_enrichment.get('status_message'), 'Error al generar enriquecimiento IA')
+        self.assertIsNone(self.finding.ai_generated_at)

@@ -156,6 +156,13 @@ def build_executive_summary_pdf(*, organization, findings, assets, scans, genera
     ]
     if ai_executive_inputs:
         pdf.add_paragraph(ai_executive_inputs[0][:420])
+        ai_priority_inputs = [
+            finding.ai_priority_reason.strip()
+            for finding in findings.order_by('-severity', '-created_at')[:10]
+            if finding.ai_priority_reason
+        ]
+        if ai_priority_inputs:
+            pdf.add_paragraph(f'Prioridad técnica IA: {ai_priority_inputs[0][:380]}')
     else:
         pdf.add_paragraph(
             'UltriScan consolida los hallazgos de la superficie de ataque y prioriza la remediacion de riesgos criticos. '
@@ -237,6 +244,11 @@ def build_technical_findings_pdf(*, organization, findings, generated_by, applie
         pdf.add_paragraph(f"Impacto: {(finding.ai_impact or 'Sin impacto enriquecido')[:420]}", width=102)
         pdf.add_paragraph(f"Priorizacion: {(finding.ai_priority_reason or 'Sin razonamiento IA')[:420]}", width=102)
         pdf.add_paragraph(f"Remediacion: {(finding.ai_remediation or finding.remediation or 'Sin remediacion definida')[:420]}", width=102)
+        ai_context = finding.ai_enrichment if isinstance(finding.ai_enrichment, dict) else {}
+        if ai_context.get('cve_context'):
+            pdf.add_paragraph(f"Contexto CVE: {str(ai_context.get('cve_context'))[:420]}", width=102)
+        if ai_context.get('exploit_context'):
+            pdf.add_paragraph(f"Contexto Exploit: {str(ai_context.get('exploit_context'))[:420]}", width=102)
         if finding.ai_owasp_category or finding.ai_cwe:
             pdf.add_paragraph(
                 f"OWASP/CWE: {finding.ai_owasp_category or '-'} / {finding.ai_cwe or '-'}",

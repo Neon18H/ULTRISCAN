@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import Organization, OrganizationMembership
@@ -60,7 +60,7 @@ class FindingDetailViewTests(TestCase):
             response,
             'Este finding no tiene contexto de correlación detallado disponible todavía.',
         )
-        self.assertContains(response, 'Aún no hay enriquecimiento IA para este finding.')
+        self.assertContains(response, 'OpenRouter no configurado.')
 
 
     def test_detail_view_renders_exploit_section_when_cve_has_public_exploit(self):
@@ -201,3 +201,23 @@ class FindingDetailViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Error al generar enriquecimiento IA')
+
+    @override_settings(OPENROUTER_API_KEY='test-key')
+    def test_detail_view_renders_ai_pending_message_when_not_generated(self):
+        finding = Finding.objects.create(
+            organization=self.organization,
+            scan_execution=self.scan,
+            asset=self.asset,
+            title='Missing CSP',
+            description='desc',
+            remediation='',
+            severity=Finding.Severity.LOW,
+            confidence=Finding.Confidence.MEDIUM,
+            correlation_trace={},
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('findings-detail', args=[finding.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Enriquecimiento IA pendiente.')

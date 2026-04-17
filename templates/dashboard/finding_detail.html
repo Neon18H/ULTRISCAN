@@ -25,9 +25,17 @@
       <div class="alert alert-danger border mb-0">
         <i class="bi bi-exclamation-octagon me-1"></i>{{ ai_enrichment_status_message|default:'Error al generar enriquecimiento IA.' }}
       </div>
+      {% elif ai_enrichment_status == 'not_configured' %}
+      <div class="alert alert-secondary border mb-0">
+        <i class="bi bi-info-circle me-1"></i>{{ ai_enrichment_status_message|default:'OpenRouter no configurado.' }}
+      </div>
+      {% elif ai_enrichment_status == 'pending' %}
+      <div class="alert alert-warning border mb-0">
+        <i class="bi bi-hourglass-split me-1"></i>{{ ai_enrichment_status_message|default:'Enriquecimiento IA pendiente.' }}
+      </div>
       {% elif ai_enrichment_status == 'skipped' %}
       <div class="alert alert-secondary border mb-0">
-        <i class="bi bi-info-circle me-1"></i>{{ ai_enrichment_status_message|default:'OpenRouter no configurado. Enriquecimiento IA omitido.' }}
+        <i class="bi bi-info-circle me-1"></i>{{ ai_enrichment_status_message|default:'OpenRouter no configurado.' }}
       </div>
       {% elif object.ai_enrichment %}
       <div class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle mb-2">Capa IA</div>
