@@ -246,6 +246,7 @@ def build_scan_report_pdf(*, scan, generated_by):
     endpoints = structured.get('endpoints') or []
     vulns = structured.get('vulnerabilities') or []
     interpreted_headers = structured.get('interpreted_headers') or []
+    appsec = structured.get('appsec') if isinstance(structured.get('appsec'), dict) else {}
 
     severity_totals = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
     for vuln in vulns:
@@ -327,6 +328,11 @@ def build_scan_report_pdf(*, scan, generated_by):
     pdf.add_paragraph('Herramientas utilizadas: WhatWeb, Gobuster/FFUF, Nuclei, Nikto, WPScan (según disponibilidad).')
     pdf.add_paragraph('Proceso aplicado: fingerprinting, enumeración de endpoints, evaluación de vulnerabilidades, correlación de findings.')
     pdf.add_paragraph(f"Alcance del scan: {scan_type} sobre {target}.")
+    if scan_type == 'web_appsec':
+        pdf.add_paragraph(
+            f"Configuración AppSec: agresividad={structured.get('aggressiveness', 'medium')} | "
+            f"módulos={', '.join(structured.get('modules_selected') or []) or 'n/a'}."
+        )
     if structured.get('partial_result') or summary.get('partial_result'):
         pdf.add_paragraph('Limitaciones detectadas: ejecución parcial por dependencias faltantes, timeouts o límites del worker.')
     if structured.get('warnings'):
@@ -406,6 +412,22 @@ def build_scan_report_pdf(*, scan, generated_by):
             )
     else:
         pdf.add_paragraph('No se detectaron vulnerabilidades en el alcance evaluado.')
+
+    if scan_type == 'web_appsec':
+        pdf.add_spacer(8)
+        pdf.add_heading('Resultados AppSec por familia', level=2)
+        families = appsec.get('findings_by_family') or {}
+        if families:
+            rows = [[family.upper(), len(items)] for family, items in families.items()]
+            pdf.add_table(['Familia', 'Total'], rows, widths=[60, 20])
+        else:
+            pdf.add_paragraph('Sin resultados AppSec por familia.')
+        suspicious = appsec.get('suspicious_parameters') or []
+        if suspicious:
+            pdf.add_spacer(6)
+            pdf.add_heading('Parámetros sospechosos', level=3)
+            for row in suspicious[:30]:
+                pdf.add_paragraph(f"- {row.get('parameter')} @ {row.get('url')}", width=104)
 
     # 6. Findings
     pdf._new_page()
