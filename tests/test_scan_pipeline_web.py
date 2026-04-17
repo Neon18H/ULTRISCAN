@@ -112,7 +112,7 @@ class WebScanPipelineTests(TestCase):
 
     @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
     @patch('scans.services.scan_pipeline.ExternalToolRunner.is_available')
-    def test_scan_fails_without_any_available_web_tool(self, mocked_is_available, mocked_run):
+    def test_scan_returns_partial_result_without_any_available_web_tool(self, mocked_is_available, mocked_run):
         mocked_is_available.return_value = False
         mocked_run.return_value = ToolExecutionResult(
             tool='missing',
@@ -130,11 +130,13 @@ class WebScanPipelineTests(TestCase):
             engine_metadata={'requested_scan_type': 'web_basic'},
         )
 
-        with self.assertRaises(ScanPipelineExecutionError) as exc:
-            ScanPipelineService().execute(scan)
-
-        self.assertFalse(exc.exception.retryable)
-        self.assertEqual(exc.exception.reason, 'web_no_tools_available')
+        result = ScanPipelineService().execute(scan)
+        self.assertEqual(result.summary['category'], 'web')
+        self.assertIn(
+            'No hubo herramientas externas exitosas; se devuelve resultado parcial usando HTTP probe/headers.',
+            result.summary['warnings'],
+        )
+        self.assertTrue(result.summary['partial_result'])
 
     @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
     @patch('scans.services.scan_pipeline.ExternalToolRunner.is_available')
@@ -408,3 +410,53 @@ class WebScanPipelineTests(TestCase):
         self.assertEqual(lookup.get('server'), 'WARNING')
         self.assertEqual(lookup.get('x-frame-options'), 'WARNING')
         self.assertIn('tools', result.engine_metadata['structured_results'])
+
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.is_available')
+    def test_gobuster_failure_falls_back_to_ffuf(self, mocked_is_available, mocked_run):
+        def tool_available(_tool):
+            return True
+
+        mocked_is_available.side_effect = tool_available
+
+        def tool_result(tool, args, timeout=None):
+            if tool == 'whatweb':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='whatweb --log-json=- https://example.com',
+                    return_code=0,
+                    stdout='[{"plugins":{"HTTPServer":{"string":["nginx"]}}}]',
+                    stderr='',
+                )
+            if tool == 'gobuster':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='gobuster dir -u https://example.com ...',
+                    return_code=1,
+                    stdout='',
+                    stderr='Error: the server returns a status code that matches the provided options',
+                )
+            if tool == 'ffuf':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='ffuf -u https://example.com/FUZZ -w /tmp/common.txt -json',
+                    return_code=0,
+                    stdout='{"url":"https://example.com/admin","status":200}\n',
+                    stderr='',
+                )
+            return ToolExecutionResult(tool=tool, command=tool, return_code=0, stdout='', stderr='')
+
+        mocked_run.side_effect = tool_result
+        scan = ScanExecution.objects.create(
+            organization=self.org,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            engine_metadata={'requested_scan_type': 'web_basic'},
+        )
+
+        result = ScanPipelineService().execute(scan)
+
+        self.assertIn('gobuster terminó con código 1.', ' '.join(result.summary['warnings']))
+        self.assertIn('ffuf', result.summary['tools_executed'])
+        self.assertGreaterEqual(result.summary['endpoints_count'], 1)

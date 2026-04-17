@@ -24,11 +24,11 @@
     {% endif %}
     <div><strong>Command:</strong> <code>{{ object.command_executed|default:'N/A' }}</code></div>
     {% if object.error_message %}<div class="alert alert-danger mt-3 mb-2">{{ object.error_message }}</div>{% endif %}
-    {% if object.summary.warnings %}
+    {% if warnings %}
       <div class="alert alert-warning mt-3 mb-2">
         <strong>Warnings técnicos</strong>
         <ul class="mb-0 mt-2">
-          {% for warning in object.summary.warnings %}
+          {% for warning in warnings %}
             <li>{{ warning }}</li>
           {% endfor %}
         </ul>
@@ -37,17 +37,17 @@
   </div>
 </div>
 
-{% if object.engine_metadata.structured_results %}
+{% if structured_results %}
 <div class="card metric-card mb-3">
   <div class="card-body">
     <h5 class="mb-3">Resultados estructurados web</h5>
     <div class="row g-3">
-      <div class="col-md-3"><div class="small text-muted">CMS</div><div class="fw-semibold">{{ object.engine_metadata.structured_results.cms|default:'-' }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">CMS</div><div class="fw-semibold">{{ structured_results.cms|default:'-' }}</div></div>
       <div class="col-md-3"><div class="small text-muted">Tecnologías</div><div class="fw-semibold">{{ object.summary.technologies_count|default:0 }}</div></div>
       <div class="col-md-3"><div class="small text-muted">Endpoints</div><div class="fw-semibold">{{ object.summary.endpoints_count|default:0 }}</div></div>
       <div class="col-md-3"><div class="small text-muted">Vulnerabilidades</div><div class="fw-semibold">{{ object.summary.vulnerabilities_count|default:0 }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Fingerprint</div><div class="fw-semibold">{% if object.engine_metadata.structured_results.fingerprint_detected %}Detectado{% else %}No detectado{% endif %}</div></div>
-      <div class="col-md-9"><div class="small text-muted">Headers HTTP</div><div class="fw-semibold"><code>{{ object.engine_metadata.structured_results.headers|default:'{}' }}</code></div></div>
+      <div class="col-md-3"><div class="small text-muted">Fingerprint</div><div class="fw-semibold">{% if structured_results.fingerprint_detected %}Detectado{% else %}No detectado{% endif %}</div></div>
+      <div class="col-md-9"><div class="small text-muted">Headers HTTP</div><div class="fw-semibold"><code>{{ structured_results.headers|default:'{}' }}</code></div></div>
     </div>
   </div>
 </div>
@@ -82,23 +82,23 @@
     <h5 class="mb-3">Resultados por módulo</h5>
     {% if tools %}
       <div class="mb-2"><strong>Disponibles:</strong> {{ tools.available|default:'-' }}</div>
-      <div class="mb-2"><strong>Ejecutadas:</strong> {{ tools.executed|default:object.summary.tools|default:'-' }}</div>
+      <div class="mb-2"><strong>Ejecutadas:</strong> {{ executed_tools|default:object.summary.tools|default:'-' }}</div>
     {% else %}
       <div class="mb-2"><strong>Disponibles:</strong> {{ object.summary.tools_available|default:'-' }}</div>
       <div class="mb-2"><strong>Ejecutadas:</strong> {{ object.summary.tools_executed|default:object.summary.tools|default:'-' }}</div>
     {% endif %}
-    {% if object.summary.tools_skipped %}
+    {% if omitted_tools %}
       <div class="mb-3"><strong>Omitidas:</strong>
-        {% for skipped in object.summary.tools_skipped %}
+        {% for skipped in omitted_tools %}
           <span class="badge text-bg-secondary">{{ skipped.tool }} · {{ skipped.reason }}</span>
         {% endfor %}
       </div>
     {% endif %}
-    {% if object.summary.dependency_checks %}
+    {% if dependencies %}
       <div class="mb-3">
         <strong>Dependencias detectadas:</strong>
         <ul class="mb-0 mt-2">
-          {% for tool_name, check in object.summary.dependency_checks.items %}
+          {% for tool_name, check in dependencies.items %}
             <li>
               {{ tool_name }}:
               {% if check.available %}
@@ -117,10 +117,27 @@
       </div>
     {% endif %}
     <ul class="list-group list-group-flush">
-      {% for module, result in object.engine_metadata.modules.items %}
+      {% for module, result in modules.items %}
       <li class="list-group-item px-0">
-        <div class="fw-semibold">{{ module }}</div>
-        <div class="small text-muted">rc={{ result.return_code }}{% if result.missing_binary %} · binary missing{% endif %}</div>
+        <div class="d-flex justify-content-between align-items-center">
+          <div class="fw-semibold">{{ module }}</div>
+          {% if result.state == 'ok' %}
+            <span class="badge text-bg-success">ok</span>
+          {% elif result.state == 'skipped' %}
+            <span class="badge text-bg-secondary">skipped</span>
+          {% elif result.state == 'warning' %}
+            <span class="badge text-bg-warning">warning</span>
+          {% else %}
+            <span class="badge text-bg-danger">failed</span>
+          {% endif %}
+        </div>
+        <div class="small text-muted mt-1">rc={{ result.return_code|default:'-' }} · <code>{{ result.command|default:'-' }}</code></div>
+        {% if result.stderr_excerpt %}
+          <div class="small text-danger mt-1"><strong>stderr:</strong> {{ result.stderr_excerpt }}</div>
+        {% endif %}
+        {% if result.stdout_excerpt %}
+          <div class="small text-muted mt-1"><strong>stdout:</strong> {{ result.stdout_excerpt }}</div>
+        {% endif %}
       </li>
       {% empty %}
       <li class="list-group-item px-0 text-muted">No hay módulos registrados.</li>
@@ -133,6 +150,58 @@
 <div class="card metric-card mb-3">
   <div class="card-body">
     <h5 class="mb-3">Interpretación de headers HTTP</h5>
+    <div class="alert alert-light border mb-3">
+      <div class="d-flex flex-wrap gap-3">
+        <span><strong>{{ headers_analysis.summary.present|default:0 }}</strong> controles presentes</span>
+        <span><strong>{{ headers_analysis.summary.absent|default:0 }}</strong> controles ausentes</span>
+        <span><strong>{{ headers_analysis.summary.informational|default:0 }}</strong> hallazgos informativos</span>
+      </div>
+    </div>
+    {% if headers_analysis.present %}
+      <h6 class="text-success">Protecciones presentes</h6>
+      <ul class="list-group list-group-flush mb-3">
+        {% for item in headers_analysis.present %}
+        <li class="list-group-item px-0">
+          <div class="fw-semibold">{{ item.header }}</div>
+          <div class="small text-muted">{{ item.message }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if headers_analysis.absent %}
+      <h6 class="text-warning">Protecciones ausentes</h6>
+      <ul class="list-group list-group-flush mb-3">
+        {% for item in headers_analysis.absent %}
+        <li class="list-group-item px-0">
+          <div class="fw-semibold">{{ item.header }}</div>
+          <div class="small text-muted">{{ item.message }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if headers_analysis.exposure %}
+      <h6 class="text-danger">Exposición tecnológica</h6>
+      <ul class="list-group list-group-flush mb-3">
+        {% for item in headers_analysis.exposure %}
+        <li class="list-group-item px-0">
+          <div class="fw-semibold">{{ item.header }}</div>
+          <div class="small text-muted">{{ item.message }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if headers_analysis.informational %}
+      <h6 class="text-info">Observaciones informativas</h6>
+      <ul class="list-group list-group-flush mb-3">
+        {% for item in headers_analysis.informational %}
+        <li class="list-group-item px-0">
+          <div class="fw-semibold">{{ item.header }}</div>
+          <div class="small text-muted">{{ item.message }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    <h6 class="mt-2">Detalle técnico</h6>
     <ul class="list-group list-group-flush">
       {% for item in interpreted_headers %}
       <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
