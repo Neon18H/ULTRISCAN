@@ -20,9 +20,9 @@ SCAN_TYPE_HELP = {
     'nmap_full': 'Escaneo estándar de infraestructura con detección de versiones sobre top ports.',
     'infra_deep': 'Escaneo profundo opcional con más cobertura y mayor tiempo de ejecución.',
     'nmap_services': 'Compatibilidad legacy: usa el perfil estándar de infraestructura.',
-    'web_basic': 'Pipeline web base: fingerprint, enumeración y vulnerabilidades.',
-    'web_full': 'Pipeline web extendido con mayor enumeración para aplicaciones completas.',
-    'web_wordpress': 'Pipeline web con detección CMS y ejecución WordPress dedicada.',
+    'web_basic': 'Pipeline web base tolerante: fingerprint, headers y checks básicos con fallback.',
+    'web_full': 'Pipeline web extendido con mayor enumeración y validaciones adicionales.',
+    'web_wordpress': 'Pipeline web con detección CMS y ejecución WordPress cuando aplique.',
     'web_api': 'Pipeline orientado a superficie API y endpoints dinámicos.',
 }
 
@@ -105,7 +105,7 @@ class CreateScanForm(forms.Form):
             'nmap_full': 'nmap',
             'infra_deep': 'nmap+nse',
             'nmap_services': 'nmap',
-            'web_basic': 'whatweb+nuclei',
+            'web_basic': 'whatweb+gobuster+nikto',
             'web_full': 'whatweb+ffuf+nuclei+nikto',
             'web_wordpress': 'whatweb+nuclei+wpscan',
             'web_api': 'whatweb+ffuf+nuclei',

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -239,94 +240,108 @@ class ScanPipelineService:
     def _run_web_pipeline(self, scan: ScanExecution, scan_type: str) -> ScanPipelineResult:
         target = scan.asset.value
         modules: dict[str, Any] = {}
-        tools_used: list[str] = []
+        tools_executed: list[str] = []
+        tools_skipped: list[dict[str, Any]] = []
+        warnings: list[str] = []
         technologies: set[str] = set()
         endpoints: list[dict[str, Any]] = []
         vulnerabilities: list[dict[str, Any]] = []
         headers: dict[str, str] = {}
         cms = ''
+        fingerprint_detected = False
+
+        def _record_module(tool_name: str, result: Any, *, required: bool = False) -> bool:
+            modules[tool_name] = vars(result)
+            if result.missing_binary:
+                reason = f'Binary {tool_name} no disponible en worker.'
+                if required:
+                    warnings.append(f'[requerido] {reason}')
+                else:
+                    warnings.append(reason)
+                tools_skipped.append({'tool': tool_name, 'reason': 'missing_binary', 'required': required})
+                return False
+            tools_executed.append(tool_name)
+            if result.timed_out:
+                warnings.append(f'{tool_name} excedió el timeout configurado.')
+            elif result.return_code != 0:
+                warnings.append(f'{tool_name} terminó con código {result.return_code}.')
+            return True
 
         # 1) Fingerprinting
         whatweb = self.external_runner.run('whatweb', ['--log-json=-', target])
-        modules['whatweb'] = vars(whatweb)
-        tools_used.append('whatweb')
-        ww_payload = parse_whatweb_json(whatweb.stdout)
-        plugins = ww_payload.get('plugins') if isinstance(ww_payload, dict) else {}
-        if isinstance(plugins, dict):
-            technologies.update(plugins.keys())
-            if 'HTTPServer' in plugins and isinstance(plugins['HTTPServer'], dict):
-                headers.update(plugins['HTTPServer'])
-        RawEvidence.objects.create(
-            organization=scan.organization,
-            scan_execution=scan,
-            source='whatweb',
-            host=target,
-            payload=ww_payload,
-            raw_output=whatweb.stdout,
-            metadata={'stderr': whatweb.stderr, 'command': whatweb.command, 'scan_type': scan_type},
-        )
+        if _record_module('whatweb', whatweb):
+            ww_payload = parse_whatweb_json(whatweb.stdout)
+            plugins = ww_payload.get('plugins') if isinstance(ww_payload, dict) else {}
+            if isinstance(plugins, dict):
+                technologies.update(plugins.keys())
+                fingerprint_detected = bool(plugins)
+                if 'HTTPServer' in plugins and isinstance(plugins['HTTPServer'], dict):
+                    headers.update(plugins['HTTPServer'])
+            RawEvidence.objects.create(
+                organization=scan.organization,
+                scan_execution=scan,
+                source='whatweb',
+                host=target,
+                payload=ww_payload,
+                raw_output=whatweb.stdout,
+                metadata={'stderr': whatweb.stderr, 'command': whatweb.command, 'scan_type': scan_type},
+            )
 
         # 2) Enumeración
         enum_tool = 'ffuf' if scan_type in {'web_api', 'web_full'} else 'gobuster'
-        if enum_tool == 'ffuf':
-            enum_res = self.external_runner.run('ffuf', ['-u', f'{target}/FUZZ', '-w', '/usr/share/wordlists/dirb/common.txt', '-json'])
-            endpoints = []
-            # fallback parsing for ffuf json-lines
-            for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
-                try:
-                    import json
-
-                    obj = json.loads(row)
-                    endpoints.append({'path': obj.get('url', ''), 'status_code': obj.get('status')})
-                except Exception:
-                    continue
-        else:
-            enum_res = self.external_runner.run('gobuster', ['dir', '-u', target, '-w', '/usr/share/wordlists/dirb/common.txt', '-o', '/dev/stdout', '--format', 'json'])
-            endpoints = parse_gobuster_json(enum_res.stdout)
-        modules[enum_tool] = vars(enum_res)
-        tools_used.append(enum_tool)
-        RawEvidence.objects.create(
-            organization=scan.organization,
-            scan_execution=scan,
-            source=enum_tool,
-            host=target,
-            payload={'endpoints': endpoints},
-            raw_output=enum_res.stdout,
-            metadata={'stderr': enum_res.stderr, 'command': enum_res.command, 'scan_type': scan_type},
+        enum_args = (
+            ['-u', f'{target}/FUZZ', '-w', '/usr/share/wordlists/dirb/common.txt', '-json']
+            if enum_tool == 'ffuf'
+            else ['dir', '-u', target, '-w', '/usr/share/wordlists/dirb/common.txt', '-o', '/dev/stdout', '--format', 'json']
         )
+        enum_res = self.external_runner.run(enum_tool, enum_args)
+        if _record_module(enum_tool, enum_res):
+            if enum_tool == 'ffuf':
+                for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
+                    try:
+                        obj = json.loads(row)
+                        endpoints.append({'path': obj.get('url', ''), 'status_code': obj.get('status')})
+                    except json.JSONDecodeError:
+                        continue
+            else:
+                endpoints = parse_gobuster_json(enum_res.stdout)
+            RawEvidence.objects.create(
+                organization=scan.organization,
+                scan_execution=scan,
+                source=enum_tool,
+                host=target,
+                payload={'endpoints': endpoints},
+                raw_output=enum_res.stdout,
+                metadata={'stderr': enum_res.stderr, 'command': enum_res.command, 'scan_type': scan_type},
+            )
 
-        # 3) Vulnerabilidades (nuclei obligatorio)
+        # 3) Vulnerabilidades
+        nuclei_required = scan_type == 'web_full'
         nuclei_res = self.external_runner.run('nuclei', ['-u', target, '-jsonl', '-silent'])
-        modules['nuclei'] = vars(nuclei_res)
-        tools_used.append('nuclei')
-        if nuclei_res.missing_binary:
-            raise RuntimeError('Nuclei es obligatorio para escaneos web y no está instalado en el worker.')
-        vulnerabilities.extend(parse_nuclei_json(nuclei_res.stdout))
+        if _record_module('nuclei', nuclei_res, required=nuclei_required):
+            vulnerabilities.extend(parse_nuclei_json(nuclei_res.stdout))
+            RawEvidence.objects.create(
+                organization=scan.organization,
+                scan_execution=scan,
+                source='nuclei',
+                host=target,
+                payload={'vulnerabilities': [v for v in vulnerabilities if v.get('type') == 'nuclei']},
+                raw_output=nuclei_res.stdout,
+                metadata={'stderr': nuclei_res.stderr, 'command': nuclei_res.command, 'scan_type': scan_type},
+            )
 
         nikto_res = self.external_runner.run('nikto', ['-h', target, '-Format', 'txt'])
-        modules['nikto'] = vars(nikto_res)
-        tools_used.append('nikto')
-        vulnerabilities.extend(parse_nikto_text(nikto_res.stdout))
-
-        RawEvidence.objects.create(
-            organization=scan.organization,
-            scan_execution=scan,
-            source='nuclei',
-            host=target,
-            payload={'vulnerabilities': vulnerabilities},
-            raw_output=nuclei_res.stdout,
-            metadata={'stderr': nuclei_res.stderr, 'command': nuclei_res.command, 'scan_type': scan_type},
-        )
-
-        RawEvidence.objects.create(
-            organization=scan.organization,
-            scan_execution=scan,
-            source='nikto',
-            host=target,
-            payload={'vulnerabilities': [v for v in vulnerabilities if v.get('type') == 'nikto']},
-            raw_output=nikto_res.stdout,
-            metadata={'stderr': nikto_res.stderr, 'command': nikto_res.command, 'scan_type': scan_type},
-        )
+        if _record_module('nikto', nikto_res):
+            vulnerabilities.extend(parse_nikto_text(nikto_res.stdout))
+            RawEvidence.objects.create(
+                organization=scan.organization,
+                scan_execution=scan,
+                source='nikto',
+                host=target,
+                payload={'vulnerabilities': [v for v in vulnerabilities if v.get('type') == 'nikto']},
+                raw_output=nikto_res.stdout,
+                metadata={'stderr': nikto_res.stderr, 'command': nikto_res.command, 'scan_type': scan_type},
+            )
 
         # 4) CMS detection + WordPress
         tech_lc = {t.lower() for t in technologies}
@@ -334,28 +349,34 @@ class ScanPipelineService:
         if wordpress_detected:
             cms = 'wordpress'
             wp_res = self.external_runner.run('wpscan', ['--url', target, '--format', 'json', '--no-update'])
-            modules['wpscan'] = vars(wp_res)
-            tools_used.append('wpscan')
-            wp_payload = parse_wpscan_json(wp_res.stdout)
-            wp_vulns = wp_payload.get('version', {}).get('vulnerabilities', []) if isinstance(wp_payload, dict) else []
-            for vuln in wp_vulns:
-                vulnerabilities.append(
-                    {
-                        'name': vuln.get('title', 'WordPress vulnerability'),
-                        'severity': 'high',
-                        'description': vuln.get('title', ''),
-                        'reference': (vuln.get('references', {}).get('url') or [''])[0],
-                        'type': 'wpscan',
-                    }
+            if _record_module('wpscan', wp_res, required=scan_type in {'web_wordpress', 'wordpress_scan'}):
+                wp_payload = parse_wpscan_json(wp_res.stdout)
+                wp_vulns = wp_payload.get('version', {}).get('vulnerabilities', []) if isinstance(wp_payload, dict) else []
+                for vuln in wp_vulns:
+                    vulnerabilities.append(
+                        {
+                            'name': vuln.get('title', 'WordPress vulnerability'),
+                            'severity': 'high',
+                            'description': vuln.get('title', ''),
+                            'reference': (vuln.get('references', {}).get('url') or [''])[0],
+                            'type': 'wpscan',
+                        }
+                    )
+                RawEvidence.objects.create(
+                    organization=scan.organization,
+                    scan_execution=scan,
+                    source='wpscan',
+                    host=target,
+                    payload=wp_payload,
+                    raw_output=wp_res.stdout,
+                    metadata={'stderr': wp_res.stderr, 'command': wp_res.command, 'scan_type': scan_type},
                 )
-            RawEvidence.objects.create(
-                organization=scan.organization,
-                scan_execution=scan,
-                source='wpscan',
-                host=target,
-                payload=wp_payload,
-                raw_output=wp_res.stdout,
-                metadata={'stderr': wp_res.stderr, 'command': wp_res.command, 'scan_type': scan_type},
+
+        if not tools_executed:
+            raise ScanPipelineExecutionError(
+                'No hay herramientas web disponibles en el worker para ejecutar este escaneo.',
+                retryable=False,
+                reason='web_no_tools_available',
             )
 
         with transaction.atomic():
@@ -427,7 +448,11 @@ class ScanPipelineService:
         summary = {
             'scan_type': scan_type,
             'category': 'web',
-            'tools': tools_used,
+            'tools': tools_executed,
+            'tools_executed': tools_executed,
+            'tools_skipped': tools_skipped,
+            'warnings': warnings,
+            'partial_result': bool(tools_skipped or warnings),
             'technologies_count': len(technologies),
             'endpoints_count': len(endpoints),
             'vulnerabilities_count': len(vulnerabilities),
@@ -437,11 +462,17 @@ class ScanPipelineService:
             'pipeline': 'web',
             'modules': modules,
             'structured_results': {
+                'scan_type': scan_type,
                 'technologies': sorted(technologies),
                 'endpoints': endpoints,
                 'vulnerabilities': vulnerabilities,
                 'headers': headers,
                 'cms': cms,
+                'tools_executed': tools_executed,
+                'tools_skipped': tools_skipped,
+                'warnings': warnings,
+                'partial_result': bool(tools_skipped or warnings),
+                'fingerprint_detected': fingerprint_detected,
             },
         }
         command_executed = ' && '.join(

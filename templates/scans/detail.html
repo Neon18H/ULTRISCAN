@@ -19,8 +19,21 @@
   <div class="card-body">
     <h5 class="mb-2">Metadata de ejecución</h5>
     <div><strong>Tools:</strong> {{ object.summary.tools|default:'nmap' }}</div>
+    {% if object.summary.partial_result %}
+    <div><strong>Resultado:</strong> <span class="badge text-bg-warning">Parcial</span></div>
+    {% endif %}
     <div><strong>Command:</strong> <code>{{ object.command_executed|default:'N/A' }}</code></div>
     {% if object.error_message %}<div class="alert alert-danger mt-3 mb-2">{{ object.error_message }}</div>{% endif %}
+    {% if object.summary.warnings %}
+      <div class="alert alert-warning mt-3 mb-2">
+        <strong>Warnings técnicos</strong>
+        <ul class="mb-0 mt-2">
+          {% for warning in object.summary.warnings %}
+            <li>{{ warning }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
   </div>
 </div>
 
@@ -33,6 +46,8 @@
       <div class="col-md-3"><div class="small text-muted">Tecnologías</div><div class="fw-semibold">{{ object.summary.technologies_count|default:0 }}</div></div>
       <div class="col-md-3"><div class="small text-muted">Endpoints</div><div class="fw-semibold">{{ object.summary.endpoints_count|default:0 }}</div></div>
       <div class="col-md-3"><div class="small text-muted">Vulnerabilidades</div><div class="fw-semibold">{{ object.summary.vulnerabilities_count|default:0 }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Fingerprint</div><div class="fw-semibold">{% if object.engine_metadata.structured_results.fingerprint_detected %}Detectado{% else %}No detectado{% endif %}</div></div>
+      <div class="col-md-9"><div class="small text-muted">Headers HTTP</div><div class="fw-semibold"><code>{{ object.engine_metadata.structured_results.headers|default:'{}' }}</code></div></div>
     </div>
   </div>
 </div>
@@ -65,6 +80,14 @@
 <div class="card metric-card mb-3">
   <div class="card-body">
     <h5 class="mb-3">Resultados por módulo</h5>
+    <div class="mb-2"><strong>Ejecutadas:</strong> {{ object.summary.tools_executed|default:object.summary.tools|default:'-' }}</div>
+    {% if object.summary.tools_skipped %}
+      <div class="mb-3"><strong>Omitidas:</strong>
+        {% for skipped in object.summary.tools_skipped %}
+          <span class="badge text-bg-secondary">{{ skipped.tool }} · {{ skipped.reason }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
     <ul class="list-group list-group-flush">
       {% for module, result in object.engine_metadata.modules.items %}
       <li class="list-group-item px-0">
