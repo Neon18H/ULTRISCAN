@@ -123,3 +123,10 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             .select_related('asset', 'profile', 'launched_by')
             .prefetch_related('service_findings', 'web_findings', 'raw_evidences', 'findings')
         )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        structured_results = (self.object.engine_metadata or {}).get('structured_results') or {}
+        context['tools'] = structured_results.get('tools', {})
+        context['interpreted_headers'] = structured_results.get('interpreted_headers', [])
+        return context

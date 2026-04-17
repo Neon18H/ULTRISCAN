@@ -80,8 +80,13 @@
 <div class="card metric-card mb-3">
   <div class="card-body">
     <h5 class="mb-3">Resultados por módulo</h5>
-    <div class="mb-2"><strong>Disponibles:</strong> {{ object.summary.tools_available|default:'-' }}</div>
-    <div class="mb-2"><strong>Ejecutadas:</strong> {{ object.summary.tools_executed|default:object.summary.tools|default:'-' }}</div>
+    {% if tools %}
+      <div class="mb-2"><strong>Disponibles:</strong> {{ tools.available|default:'-' }}</div>
+      <div class="mb-2"><strong>Ejecutadas:</strong> {{ tools.executed|default:object.summary.tools|default:'-' }}</div>
+    {% else %}
+      <div class="mb-2"><strong>Disponibles:</strong> {{ object.summary.tools_available|default:'-' }}</div>
+      <div class="mb-2"><strong>Ejecutadas:</strong> {{ object.summary.tools_executed|default:object.summary.tools|default:'-' }}</div>
+    {% endif %}
     {% if object.summary.tools_skipped %}
       <div class="mb-3"><strong>Omitidas:</strong>
         {% for skipped in object.summary.tools_skipped %}
@@ -123,6 +128,31 @@
     </ul>
   </div>
 </div>
+
+{% if interpreted_headers %}
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h5 class="mb-3">Interpretación de headers HTTP</h5>
+    <ul class="list-group list-group-flush">
+      {% for item in interpreted_headers %}
+      <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+        <div>
+          <div class="fw-semibold">{{ item.header }}</div>
+          <div class="small text-muted">{{ item.title }} · {{ item.message }}</div>
+        </div>
+        {% if item.status == 'OK' %}
+          <span class="badge text-bg-success">OK</span>
+        {% elif item.status == 'WARNING' %}
+          <span class="badge text-bg-warning">WARNING</span>
+        {% else %}
+          <span class="badge text-bg-info">INFO</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
 
 <div class="row g-3">
   <div class="col-lg-6">

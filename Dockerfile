@@ -26,6 +26,8 @@ RUN apt-get update \
     && curl -fsSL "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" -o /tmp/nuclei.zip \
     && unzip -q /tmp/nuclei.zip -d /tmp \
     && install -m 0755 /tmp/nuclei /usr/local/bin/nuclei \
+    && git clone --depth 1 https://github.com/danielmiessler/SecLists.git /opt/seclists \
+    && nuclei -update-templates \
     && rm -f /tmp/nuclei.zip /tmp/nuclei \
     && if ! gem install --no-document wpscan; then \
         echo "WARNING: WPScan installation failed; continuing build without wpscan binary." > /usr/local/share/wpscan-install-warning.txt; \

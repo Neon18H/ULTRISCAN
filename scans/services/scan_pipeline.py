@@ -50,6 +50,45 @@ NMAP_PROFILE_BY_SCAN_TYPE = {
     'infra_deep': 'infra_deep',
 }
 
+HEADER_INTERPRETATION_RULES = {
+    'x-frame-options': {
+        'title': 'Protección anti-clickjacking',
+        'ok_when_present': True,
+        'ok_description': 'Header presente: ayuda a mitigar iframes maliciosos.',
+        'warning_description': 'Header ausente: existe riesgo de clickjacking.',
+    },
+    'x-content-type-options': {
+        'title': 'Protección MIME sniffing',
+        'ok_when_present': True,
+        'ok_description': 'Header presente: evita interpretación MIME insegura.',
+        'warning_description': 'Header ausente: el navegador puede inferir tipos MIME incorrectos.',
+    },
+    'strict-transport-security': {
+        'title': 'Forzado de HTTPS (HSTS)',
+        'ok_when_present': True,
+        'ok_description': 'Header presente: refuerza uso de HTTPS.',
+        'warning_description': 'Header ausente: no hay política HSTS anunciada.',
+    },
+    'content-security-policy': {
+        'title': 'Política de seguridad de contenido (CSP)',
+        'ok_when_present': True,
+        'ok_description': 'Header presente: ayuda a reducir riesgo XSS.',
+        'warning_description': 'Header ausente: sin política CSP explícita.',
+    },
+    'server': {
+        'title': 'Exposición tecnológica por Server',
+        'ok_when_present': False,
+        'ok_description': 'Header oculto: menor exposición de fingerprinting.',
+        'warning_description': 'Header expuesto: revela stack/tecnología del servidor.',
+    },
+    'x-powered-by': {
+        'title': 'Exposición tecnológica por X-Powered-By',
+        'ok_when_present': False,
+        'ok_description': 'Header oculto: menor exposición de framework/backend.',
+        'warning_description': 'Header expuesto: revela tecnología de backend.',
+    },
+}
+
 
 @dataclass
 class ScanPipelineResult:
@@ -255,6 +294,7 @@ class ScanPipelineService:
         endpoints: list[dict[str, Any]] = []
         vulnerabilities: list[dict[str, Any]] = []
         headers: dict[str, str] = {}
+        interpreted_headers: list[dict[str, Any]] = []
         cms = ''
         fingerprint_detected = False
 
@@ -332,6 +372,7 @@ class ScanPipelineService:
                     headers.update({'X-Powered-By': str(plugins['X-Powered-By'])})
                 if 'WordPress' in plugins:
                     cms = 'wordpress'
+            interpreted_headers = self._interpret_headers(headers)
             RawEvidence.objects.create(
                 organization=scan.organization,
                 scan_execution=scan,
@@ -363,27 +404,41 @@ class ScanPipelineService:
                 warnings.append(wordlist_warning)
             if wordlist:
                 enum_res = self.run_ffuf(target, wordlist) if enum_tool == 'ffuf' else self.run_gobuster(target, wordlist)
+                if _record_module(enum_tool, enum_res):
+                    if enum_tool == 'ffuf':
+                        for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
+                            try:
+                                obj = json.loads(row)
+                                endpoints.append({'path': obj.get('url', ''), 'status_code': obj.get('status')})
+                            except json.JSONDecodeError:
+                                continue
+                    else:
+                        endpoints = parse_gobuster_json(enum_res.stdout)
+                    RawEvidence.objects.create(
+                        organization=scan.organization,
+                        scan_execution=scan,
+                        source=enum_tool,
+                        host=target,
+                        payload={'endpoints': endpoints},
+                        raw_output=enum_res.stdout,
+                        metadata={'stderr': enum_res.stderr, 'command': enum_res.command, 'scan_type': scan_type},
+                    )
             else:
-                enum_res = self._missing_dependency_result(enum_tool, 'No wordlist disponible para enumeración web.')
-            if _record_module(enum_tool, enum_res):
-                if enum_tool == 'ffuf':
-                    for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
-                        try:
-                            obj = json.loads(row)
-                            endpoints.append({'path': obj.get('url', ''), 'status_code': obj.get('status')})
-                        except json.JSONDecodeError:
-                            continue
-                else:
-                    endpoints = parse_gobuster_json(enum_res.stdout)
-                RawEvidence.objects.create(
-                    organization=scan.organization,
-                    scan_execution=scan,
-                    source=enum_tool,
-                    host=target,
-                    payload={'endpoints': endpoints},
-                    raw_output=enum_res.stdout,
-                    metadata={'stderr': enum_res.stderr, 'command': enum_res.command, 'scan_type': scan_type},
-                )
+                modules[enum_tool] = {
+                    'tool': enum_tool,
+                    'command': '',
+                    'return_code': 0,
+                    'stdout': '',
+                    'stderr': 'Missing wordlist',
+                    'timed_out': False,
+                    'missing_binary': False,
+                    'skipped': True,
+                    'reason': 'missing_wordlist',
+                }
+                warnings.append(f'Se omite {enum_tool}: no se encontró wordlist para enumeración.')
+                tools_skipped.append({'tool': enum_tool, 'reason': 'missing_wordlist', 'required': False})
+
+        interpreted_headers = self._interpret_headers(headers)
 
         # 3) Vulnerabilidades
         nuclei_required = scan_type == 'web_full'
@@ -530,6 +585,18 @@ class ScanPipelineService:
                     },
                 )
 
+            for header_finding in interpreted_headers:
+                WebFinding.objects.create(
+                    organization=scan.organization,
+                    scan_execution=scan,
+                    host=host,
+                    url=target,
+                    title=f"Header: {header_finding['header']}",
+                    technology='',
+                    evidence=f"{header_finding['status']} · {header_finding['message']}",
+                    metadata={'module': 'http_headers', **header_finding},
+                )
+
         summary = {
             'scan_type': scan_type,
             'category': 'web',
@@ -544,8 +611,16 @@ class ScanPipelineService:
             'technologies_count': len(technologies),
             'endpoints_count': len(endpoints),
             'vulnerabilities_count': len(vulnerabilities),
+            'interpreted_headers_count': len(interpreted_headers),
             'cms': cms,
             'target': target,
+        }
+        tools_map = {
+            'available': tools_available,
+            'executed': tools_executed,
+            'failed': tools_failed,
+            'skipped': tools_skipped,
+            'dependency_checks': dependency_checks,
         }
         metadata = {
             'pipeline': 'web',
@@ -558,8 +633,10 @@ class ScanPipelineService:
                 'endpoints': endpoints,
                 'vulnerabilities': vulnerabilities,
                 'headers': headers,
+                'interpreted_headers': interpreted_headers,
                 'cms': cms,
                 'fingerprint': parse_whatweb_json(modules.get('whatweb', {}).get('stdout', '') if modules.get('whatweb') else ''),
+                'tools': tools_map,
                 'tools_available': tools_available,
                 'tools_executed': tools_executed,
                 'tools_failed': tools_failed,
@@ -654,13 +731,14 @@ class ScanPipelineService:
 
     def _resolve_wordlist(self) -> tuple[str | None, str]:
         candidates = [
+            Path('/opt/seclists/Discovery/Web-Content/common.txt'),
             Path('/usr/share/wordlists/dirb/common.txt'),
             Path('/usr/share/seclists/Discovery/Web-Content/common.txt'),
         ]
         for candidate in candidates:
             if candidate.exists():
                 return str(candidate), ''
-        return None, 'No se encontró wordlist de enumeración; se omite gobuster/ffuf.'
+        return None, 'Wordlist no encontrada (esperada: /opt/seclists/Discovery/Web-Content/common.txt); se omite gobuster/ffuf sin abortar el scan.'
 
     def _resolve_nuclei_templates(self) -> Path | None:
         env_raw = os.environ.get('NUCLEI_TEMPLATES', '').strip()
@@ -675,9 +753,38 @@ class ScanPipelineService:
             ]
         )
         for candidate in candidates:
-            if candidate and candidate.exists() and candidate.is_dir():
+            if candidate and candidate.exists() and candidate.is_dir() and any(candidate.glob('**/*.yaml')):
                 return candidate
         return None
+
+    def _interpret_headers(self, headers: dict[str, Any]) -> list[dict[str, Any]]:
+        lowered = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+        interpreted: list[dict[str, Any]] = []
+        for header_name, rule in HEADER_INTERPRETATION_RULES.items():
+            present = header_name in lowered and bool(lowered.get(header_name))
+            ok = present if rule['ok_when_present'] else not present
+            status = 'OK' if ok else 'WARNING'
+            interpreted.append(
+                {
+                    'header': header_name,
+                    'title': rule['title'],
+                    'status': status,
+                    'value': lowered.get(header_name, ''),
+                    'message': rule['ok_description'] if ok else rule['warning_description'],
+                }
+            )
+        unknown_headers = sorted(set(lowered.keys()) - set(HEADER_INTERPRETATION_RULES.keys()))
+        for extra in unknown_headers[:10]:
+            interpreted.append(
+                {
+                    'header': extra,
+                    'title': 'Header informativo',
+                    'status': 'INFO',
+                    'value': lowered.get(extra, ''),
+                    'message': 'Header observado sin regla específica de interpretación.',
+                }
+            )
+        return interpreted
 
     def _missing_dependency_result(self, tool: str, reason: str):
         return ToolExecutionResult(

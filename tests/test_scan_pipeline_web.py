@@ -303,3 +303,108 @@ class WebScanPipelineTests(TestCase):
             ScanPipelineService().execute(scan)
 
         self.assertEqual(exc.exception.reason, 'web_target_unreachable')
+
+    @patch('scans.services.scan_pipeline.ScanPipelineService._resolve_wordlist', return_value=(None, 'missing wordlist'))
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.is_available')
+    def test_web_scan_skips_gobuster_when_wordlist_missing(self, mocked_is_available, mocked_run, _mocked_wordlist):
+        mocked_is_available.return_value = True
+
+        def tool_result(tool, args, timeout=None):
+            if tool == 'whatweb':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='whatweb --log-json=- https://example.com',
+                    return_code=0,
+                    stdout='[{"plugins":{"HTTPServer":{"Server":"nginx"}}}]',
+                    stderr='',
+                )
+            if tool == 'nuclei':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='nuclei -u https://example.com -jsonl -silent -t /tmp/nuclei-templates',
+                    return_code=0,
+                    stdout='',
+                    stderr='',
+                )
+            if tool == 'nikto':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='nikto -h https://example.com -Format txt',
+                    return_code=0,
+                    stdout='',
+                    stderr='',
+                )
+            return ToolExecutionResult(tool=tool, command=tool, return_code=0, stdout='', stderr='')
+
+        mocked_run.side_effect = tool_result
+        scan = ScanExecution.objects.create(
+            organization=self.org,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            engine_metadata={'requested_scan_type': 'web_basic'},
+        )
+
+        result = ScanPipelineService().execute(scan)
+
+        self.assertIn({'tool': 'gobuster', 'reason': 'missing_wordlist', 'required': False}, result.summary['tools_skipped'])
+        self.assertIn('Se omite gobuster: no se encontró wordlist para enumeración.', result.summary['warnings'])
+        self.assertNotIn('gobuster', result.summary['tools_executed'])
+
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.is_available')
+    def test_web_scan_interprets_http_headers(self, mocked_is_available, mocked_run):
+        mocked_is_available.return_value = True
+
+        def tool_result(tool, args, timeout=None):
+            if tool == 'whatweb':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='whatweb --log-json=- https://example.com',
+                    return_code=0,
+                    stdout='[{"plugins":{"HTTPServer":{"Server":"nginx"},"X-Powered-By":{"string":["PHP/8.2"]}}}]',
+                    stderr='',
+                )
+            if tool == 'gobuster':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='gobuster dir -u https://example.com ...',
+                    return_code=0,
+                    stdout='',
+                    stderr='',
+                )
+            if tool == 'nuclei':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='nuclei -u https://example.com -jsonl -silent',
+                    return_code=0,
+                    stdout='',
+                    stderr='',
+                )
+            if tool == 'nikto':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='nikto -h https://example.com -Format txt',
+                    return_code=0,
+                    stdout='',
+                    stderr='',
+                )
+            return ToolExecutionResult(tool=tool, command=tool, return_code=0, stdout='', stderr='')
+
+        mocked_run.side_effect = tool_result
+        scan = ScanExecution.objects.create(
+            organization=self.org,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            engine_metadata={'requested_scan_type': 'web_basic'},
+        )
+
+        result = ScanPipelineService().execute(scan)
+
+        interpreted_headers = result.engine_metadata['structured_results']['interpreted_headers']
+        lookup = {row['header']: row['status'] for row in interpreted_headers}
+        self.assertEqual(lookup.get('server'), 'WARNING')
+        self.assertEqual(lookup.get('x-frame-options'), 'WARNING')
+        self.assertIn('tools', result.engine_metadata['structured_results'])
