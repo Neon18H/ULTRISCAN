@@ -6,7 +6,22 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nmap netcat-openbsd \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        ffuf \
+        gobuster \
+        nikto \
+        nmap \
+        netcat-openbsd \
+        ruby-full \
+        unzip \
+        whatweb \
+    && NUCLEI_VERSION=3.3.9 \
+    && curl -fsSL "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" -o /tmp/nuclei.zip \
+    && unzip -q /tmp/nuclei.zip -d /tmp \
+    && install -m 0755 /tmp/nuclei /usr/local/bin/nuclei \
+    && rm -f /tmp/nuclei.zip /tmp/nuclei \
+    && gem install --no-document wpscan \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

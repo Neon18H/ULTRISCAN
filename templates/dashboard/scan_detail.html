@@ -8,6 +8,17 @@
     <p><b>Fallback unprivileged:</b> {% if object.engine_metadata.runner_metadata.fallback_used %}Sí{% else %}No{% endif %}</p>
     <p><b>Error:</b> {{ object.error_message|default:'-' }}</p>
     <p><b>Resumen:</b> {{ object.summary|default:'-' }}</p>
+    {% if object.summary.warnings %}
+      <p><b>Warnings:</b></p>
+      <ul>
+        {% for warning in object.summary.warnings %}
+          <li>{{ warning }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    <p><b>Herramientas ejecutadas:</b> {{ object.summary.tools_executed|default:object.summary.tools|default:'-' }}</p>
+    <p><b>Herramientas omitidas:</b> {{ object.summary.tools_skipped|default:'-' }}</p>
+    <p><b>Resultado parcial:</b> {% if object.summary.partial_result %}Sí{% else %}No{% endif %}</p>
     {% if object.engine_metadata.runner_metadata.stderr %}<p><b>stderr:</b><pre>{{ object.engine_metadata.runner_metadata.stderr }}</pre></p>{% endif %}
   </div>
 </div>
