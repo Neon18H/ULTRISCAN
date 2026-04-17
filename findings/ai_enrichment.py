@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from django.conf import settings
+from django.utils import timezone
 
 from findings.nvd_correlation import FindingNvdCorrelationService
 from integrations.openrouter_client import OpenRouterClient
@@ -70,19 +71,40 @@ class AIFindingEnrichmentService:
         )
 
     def enrich_findings(self, findings) -> int:
-        if not self.client.enabled:
-            logger.info('AI enrichment skipped: OpenRouter is not configured.')
-            return 0
+        logger.info(
+            'AI enrichment configuration: enabled=%s base_url=%s model=%s api_key_present=%s',
+            self.client.enabled,
+            self.client.base_url,
+            self.client.model or '<empty>',
+            bool(self.client.api_key),
+        )
 
-        total = 0
         if hasattr(findings, 'select_related'):
             iterable = findings.select_related('asset', 'service_finding', 'vulnerability_rule', 'raw_evidence')
         else:
             iterable = findings
 
+        if not self.client.enabled:
+            logger.info('AI enrichment skipped: OpenRouter is not configured.')
+            for finding in iterable:
+                self._mark_skipped(
+                    finding,
+                    reason='openrouter_not_configured',
+                    message='OpenRouter no configurado. Enriquecimiento IA omitido.',
+                )
+            return 0
+
+        total = 0
         for finding in iterable:
             try:
+                logger.info('AI enrichment processing finding_id=%s title=%s', finding.id, finding.title)
                 payload = self._build_context_payload(finding)
+                logger.info(
+                    'AI enrichment calling OpenRouter for finding_id=%s cves=%s exploits=%s',
+                    finding.id,
+                    len(payload.get('cves_correlated') or []),
+                    len(payload.get('exploits_correlated') or []),
+                )
                 result = self.client.create_structured_completion(
                     system_prompt=SYSTEM_PROMPT,
                     user_payload=payload,
@@ -91,8 +113,10 @@ class AIFindingEnrichmentService:
                 )
                 self._persist_enrichment(finding, result)
                 total += 1
-            except Exception:
+                logger.info('AI enrichment saved finding_id=%s', finding.id)
+            except Exception as exc:
                 logger.exception('AI enrichment failed for finding_id=%s', finding.id)
+                self._mark_failed(finding, message='Error al generar enriquecimiento IA', detail=str(exc))
         return total
 
     def _build_context_payload(self, finding) -> dict[str, Any]:
@@ -164,7 +188,15 @@ class AIFindingEnrichmentService:
         }
 
     def _persist_enrichment(self, finding, result: dict[str, Any]) -> None:
-        finding.ai_enrichment = result
+        enriched_payload = {
+            **result,
+            'status': 'success',
+            'status_message': 'Enriquecimiento IA generado correctamente.',
+            'provider': 'openrouter',
+            'model': self.client.model,
+            'generated_at': timezone.now().isoformat(),
+        }
+        finding.ai_enrichment = enriched_payload
         finding.ai_title = (result.get('finding_title') or '')[:255]
         finding.ai_summary = result.get('evidence_summary') or ''
         finding.ai_impact = result.get('impact_summary') or ''
@@ -189,3 +221,27 @@ class AIFindingEnrichmentService:
                 'updated_at',
             ]
         )
+
+    def _mark_skipped(self, finding, *, reason: str, message: str) -> None:
+        finding.ai_enrichment = {
+            'status': 'skipped',
+            'reason': reason,
+            'status_message': message,
+            'provider': 'openrouter',
+            'model': self.client.model,
+            'generated_at': timezone.now().isoformat(),
+        }
+        finding.save(update_fields=['ai_enrichment', 'updated_at'])
+        logger.info('AI enrichment skipped for finding_id=%s reason=%s', finding.id, reason)
+
+    def _mark_failed(self, finding, *, message: str, detail: str) -> None:
+        finding.ai_enrichment = {
+            'status': 'error',
+            'status_message': message,
+            'error': (detail or '')[:400],
+            'provider': 'openrouter',
+            'model': self.client.model,
+            'generated_at': timezone.now().isoformat(),
+        }
+        finding.save(update_fields=['ai_enrichment', 'updated_at'])
+        logger.warning('AI enrichment error persisted for finding_id=%s', finding.id)

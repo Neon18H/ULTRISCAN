@@ -528,6 +528,14 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             lambda: self._build_exploit_context(context['nvd_correlation']),
         )
         context['ai_context'] = self.object.ai_enrichment if isinstance(self.object.ai_enrichment, dict) else {}
+        ai_status = (context['ai_context'].get('status') or '').strip().lower()
+        status_messages = {
+            'skipped': 'OpenRouter no configurado. Enriquecimiento IA omitido.',
+            'error': context['ai_context'].get('status_message') or 'Error al generar enriquecimiento IA.',
+            'success': context['ai_context'].get('status_message') or '',
+        }
+        context['ai_enrichment_status_message'] = status_messages.get(ai_status, '')
+        context['ai_enrichment_status'] = ai_status
         return context
 
 

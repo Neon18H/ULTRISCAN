@@ -133,8 +133,10 @@ def _run_pipeline(*, scan_execution_id: int, expected: str) -> None:
         _update_progress(scan, percent=90, stage='correlation', status_message='Correlacionando hallazgos')
 
         findings = correlate_scan_execution(scan)
+        logger.info('Scan %s correlation completed: findings=%s', scan.id, len(findings))
         _update_progress(scan, percent=94, stage='enrichment', status_message='Enriqueciendo findings con IA')
-        enrich_findings_with_ai(findings)
+        enriched_total = enrich_findings_with_ai(findings)
+        logger.info('Scan %s AI enrichment completed: enriched=%s total_findings=%s', scan.id, enriched_total, len(findings))
         _update_progress(scan, percent=97, stage='reporting', status_message='Generando resumen operativo')
         summary = {**result.summary, 'findings': len(findings), 'services': scan.service_findings.count()}
         scan.summary = summary
