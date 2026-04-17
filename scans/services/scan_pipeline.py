@@ -338,7 +338,7 @@ class ScanPipelineService:
             warnings.append('Nikto no disponible: se omite escaneo nikto (opcional).')
 
         def _record_module(tool_name: str, result: Any, *, required: bool = False) -> bool:
-            modules[tool_name] = vars(result)
+            modules[tool_name] = self._serialize_module_result(result, required=required)
             if result.missing_binary:
                 reason = f'Binary {tool_name} no disponible en worker.'
                 if required:
@@ -348,12 +348,27 @@ class ScanPipelineService:
                 tools_skipped.append({'tool': tool_name, 'reason': 'missing_binary', 'required': required})
                 return False
             if result.timed_out:
-                tools_failed.append({'tool': tool_name, 'return_code': result.return_code, 'timed_out': True})
-                warnings.append(f'{tool_name} excedió el timeout configurado.')
+                tools_failed.append(
+                    {
+                        'tool': tool_name,
+                        'return_code': result.return_code,
+                        'timed_out': True,
+                        'stderr': self._summarize_output(result.stderr, 240),
+                    }
+                )
+                warnings.append(f'{tool_name} excedió el timeout configurado. {self._summarize_output(result.stderr, 180)}')
                 return False
             elif result.return_code != 0:
-                tools_failed.append({'tool': tool_name, 'return_code': result.return_code, 'timed_out': False})
-                warnings.append(f'{tool_name} terminó con código {result.return_code}.')
+                details = self._summarize_output(result.stderr or result.stdout, 220)
+                tools_failed.append(
+                    {
+                        'tool': tool_name,
+                        'return_code': result.return_code,
+                        'timed_out': False,
+                        'stderr': self._summarize_output(result.stderr, 240),
+                    }
+                )
+                warnings.append(f'{tool_name} terminó con código {result.return_code}. Detalle: {details or "sin stderr"}')
                 return False
             tools_executed.append(tool_name)
             return True
@@ -362,16 +377,20 @@ class ScanPipelineService:
         whatweb = self.run_whatweb(target)
         if _record_module('whatweb', whatweb, required=True):
             ww_payload = parse_whatweb_json(whatweb.stdout)
-            plugins = ww_payload.get('plugins') if isinstance(ww_payload, dict) else {}
+            plugins = self._extract_whatweb_plugins(ww_payload)
             if isinstance(plugins, dict):
                 technologies.update(plugins.keys())
                 fingerprint_detected = bool(plugins)
-                if 'HTTPServer' in plugins and isinstance(plugins['HTTPServer'], dict):
-                    headers.update(plugins['HTTPServer'])
-                if 'X-Powered-By' in plugins and isinstance(plugins['X-Powered-By'], dict):
-                    headers.update({'X-Powered-By': str(plugins['X-Powered-By'])})
+                if 'HTTPServer' in plugins:
+                    headers['Server'] = self._extract_plugin_text(plugins.get('HTTPServer'))
+                if 'X-Powered-By' in plugins:
+                    headers['X-Powered-By'] = self._extract_plugin_text(plugins.get('X-Powered-By'))
                 if 'WordPress' in plugins:
                     cms = 'wordpress'
+            if not fingerprint_detected and (whatweb.stdout or whatweb.stderr):
+                warnings.append(
+                    'WhatWeb no identificó plugins claros; revisar salida técnica en metadata del módulo whatweb.'
+                )
             interpreted_headers = self._interpret_headers(headers)
             RawEvidence.objects.create(
                 organization=scan.organization,
@@ -404,7 +423,20 @@ class ScanPipelineService:
                 warnings.append(wordlist_warning)
             if wordlist:
                 enum_res = self.run_ffuf(target, wordlist) if enum_tool == 'ffuf' else self.run_gobuster(target, wordlist)
-                if _record_module(enum_tool, enum_res):
+                enum_ok = _record_module(enum_tool, enum_res)
+                if not enum_ok and tool_presence.get(fallback_enum_tool) and fallback_enum_tool != enum_tool:
+                    warnings.append(
+                        f'{enum_tool} falló; se intenta fallback con {fallback_enum_tool}.'
+                    )
+                    fallback_result = (
+                        self.run_ffuf(target, wordlist)
+                        if fallback_enum_tool == 'ffuf'
+                        else self.run_gobuster(target, wordlist)
+                    )
+                    enum_ok = _record_module(fallback_enum_tool, fallback_result)
+                    enum_tool = fallback_enum_tool
+                    enum_res = fallback_result
+                if enum_ok:
                     if enum_tool == 'ffuf':
                         for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
                             try:
@@ -421,7 +453,13 @@ class ScanPipelineService:
                         host=target,
                         payload={'endpoints': endpoints},
                         raw_output=enum_res.stdout,
-                        metadata={'stderr': enum_res.stderr, 'command': enum_res.command, 'scan_type': scan_type},
+                        metadata={
+                            'stderr': enum_res.stderr,
+                            'stdout_excerpt': self._summarize_output(enum_res.stdout, 400),
+                            'command': enum_res.command,
+                            'scan_type': scan_type,
+                            'wordlist': wordlist,
+                        },
                     )
             else:
                 modules[enum_tool] = {
@@ -430,10 +468,13 @@ class ScanPipelineService:
                     'return_code': 0,
                     'stdout': '',
                     'stderr': 'Missing wordlist',
+                    'stdout_excerpt': '',
+                    'stderr_excerpt': 'Missing wordlist',
                     'timed_out': False,
                     'missing_binary': False,
                     'skipped': True,
                     'reason': 'missing_wordlist',
+                    'state': 'skipped',
                 }
                 warnings.append(f'Se omite {enum_tool}: no se encontró wordlist para enumeración.')
                 tools_skipped.append({'tool': enum_tool, 'reason': 'missing_wordlist', 'required': False})
@@ -444,9 +485,14 @@ class ScanPipelineService:
         nuclei_required = scan_type == 'web_full'
         nuclei_templates = self._resolve_nuclei_templates()
         if not nuclei_templates:
-            warnings.append('No se encontraron templates de nuclei; se omite escaneo nuclei.')
+            warnings.append(
+                f'No se encontraron templates de nuclei en rutas esperadas ({", ".join(self._nuclei_template_candidates())}); se omite.'
+            )
             tools_skipped.append({'tool': 'nuclei', 'reason': 'missing_templates', 'required': nuclei_required})
-            nuclei_res = self._missing_dependency_result('nuclei', 'No nuclei templates found')
+            nuclei_res = self._missing_dependency_result(
+                'nuclei',
+                f'No nuclei templates found in: {", ".join(self._nuclei_template_candidates())}',
+            )
         else:
             nuclei_res = self.run_nuclei(target, nuclei_templates)
         if _record_module('nuclei', nuclei_res, required=nuclei_required):
@@ -513,11 +559,7 @@ class ScanPipelineService:
                 )
 
         if not tools_executed:
-            raise ScanPipelineExecutionError(
-                'No hay herramientas web disponibles en el worker para ejecutar este escaneo.',
-                retryable=False,
-                reason='web_no_tools_available',
-            )
+            warnings.append('No hubo herramientas externas exitosas; se devuelve resultado parcial usando HTTP probe/headers.')
 
         with transaction.atomic():
             host, port = url_host_port(target)
@@ -645,6 +687,7 @@ class ScanPipelineService:
                 'warnings': warnings,
                 'partial_result': bool(tools_skipped or warnings),
                 'fingerprint_detected': fingerprint_detected,
+                'headers_analysis': self._group_interpreted_headers(interpreted_headers),
             },
         }
         command_executed = '; '.join(
@@ -720,7 +763,7 @@ class ScanPipelineService:
     def run_gobuster(self, target: str, wordlist: str):
         return self.external_runner.run(
             'gobuster',
-            ['dir', '-u', target, '-w', wordlist, '-o', '/dev/stdout', '--format', 'json', '-k'],
+            ['dir', '-u', target, '-w', wordlist, '-o', '/dev/stdout', '--format', 'json', '-k', '-r', '--no-error'],
         )
 
     def run_ffuf(self, target: str, wordlist: str):
@@ -741,21 +784,26 @@ class ScanPipelineService:
         return None, 'Wordlist no encontrada (esperada: /opt/seclists/Discovery/Web-Content/common.txt); se omite gobuster/ffuf sin abortar el scan.'
 
     def _resolve_nuclei_templates(self) -> Path | None:
-        env_raw = os.environ.get('NUCLEI_TEMPLATES', '').strip()
-        env_path = Path(env_raw) if env_raw else None
-        candidates = [env_path] if env_path else []
-        candidates.extend(
-            [
-                Path.home() / 'nuclei-templates',
-                Path('/root/nuclei-templates'),
-                Path('/usr/local/nuclei-templates'),
-                Path('/opt/nuclei-templates'),
-            ]
-        )
+        candidates = [Path(p) for p in self._nuclei_template_candidates()]
         for candidate in candidates:
             if candidate and candidate.exists() and candidate.is_dir() and any(candidate.glob('**/*.yaml')):
                 return candidate
         return None
+
+    def _nuclei_template_candidates(self) -> list[str]:
+        env_raw = os.environ.get('NUCLEI_TEMPLATES', '').strip()
+        candidates: list[str] = []
+        if env_raw:
+            candidates.append(env_raw)
+        candidates.extend(
+            [
+                str(Path.home() / 'nuclei-templates'),
+                '/root/nuclei-templates',
+                '/usr/local/nuclei-templates',
+                '/opt/nuclei-templates',
+            ]
+        )
+        return candidates
 
     def _interpret_headers(self, headers: dict[str, Any]) -> list[dict[str, Any]]:
         lowered = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
@@ -795,3 +843,74 @@ class ScanPipelineService:
             stderr=reason,
             missing_binary=False,
         )
+
+    def _serialize_module_result(self, result: ToolExecutionResult, *, required: bool = False) -> dict[str, Any]:
+        if result.missing_binary:
+            state = 'skipped'
+        elif result.timed_out:
+            state = 'failed'
+        elif result.return_code == 0:
+            state = 'ok'
+        else:
+            state = 'failed' if required else 'warning'
+        return {
+            **vars(result),
+            'state': state,
+            'required': required,
+            'stdout_excerpt': self._summarize_output(result.stdout, 400),
+            'stderr_excerpt': self._summarize_output(result.stderr, 400),
+        }
+
+    def _summarize_output(self, raw: str, limit: int = 220) -> str:
+        text = ' '.join((raw or '').split())
+        if len(text) <= limit:
+            return text
+        return f'{text[: limit - 3]}...'
+
+    def _extract_whatweb_plugins(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        plugins = payload.get('plugins')
+        if isinstance(plugins, dict):
+            return plugins
+        return {}
+
+    def _extract_plugin_text(self, plugin_value: Any) -> str:
+        if isinstance(plugin_value, str):
+            return plugin_value
+        if isinstance(plugin_value, list):
+            return ', '.join(str(v) for v in plugin_value if v)
+        if isinstance(plugin_value, dict):
+            for key in ('string', 'version', 'os', 'module'):
+                value = plugin_value.get(key)
+                if isinstance(value, list):
+                    return ', '.join(str(v) for v in value if v)
+                if value:
+                    return str(value)
+            return ', '.join(f'{k}={v}' for k, v in plugin_value.items() if v)
+        return str(plugin_value or '')
+
+    def _group_interpreted_headers(self, interpreted_headers: list[dict[str, Any]]) -> dict[str, Any]:
+        present = [item for item in interpreted_headers if item.get('status') == 'OK']
+        absent = [
+            item
+            for item in interpreted_headers
+            if item.get('status') == 'WARNING' and item.get('header') not in {'server', 'x-powered-by'}
+        ]
+        exposure = [
+            item
+            for item in interpreted_headers
+            if item.get('status') == 'WARNING' and item.get('header') in {'server', 'x-powered-by'}
+        ]
+        informational = [item for item in interpreted_headers if item.get('status') == 'INFO']
+        return {
+            'present': present,
+            'absent': absent,
+            'exposure': exposure,
+            'informational': informational,
+            'summary': {
+                'present': len(present),
+                'absent': len(absent),
+                'informational': len(informational) + len(exposure),
+            },
+        }

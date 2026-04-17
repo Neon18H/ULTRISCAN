@@ -7,15 +7,40 @@ from scans.engines.tooling import parse_json_lines
 
 
 def parse_whatweb_json(raw_output: str) -> dict:
-    try:
-        payload = json.loads(raw_output)
+    def _normalize(payload: object) -> dict:
         if isinstance(payload, list) and payload:
             first = payload[0]
             return first if isinstance(first, dict) else {}
         if isinstance(payload, dict):
+            if isinstance(payload.get('plugins'), dict):
+                return payload
+            if len(payload) == 1:
+                first = next(iter(payload.values()))
+                if isinstance(first, dict) and isinstance(first.get('plugins'), dict):
+                    return first
             return payload
+        return {}
+
+    raw = (raw_output or '').strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return _normalize(parsed)
     except json.JSONDecodeError:
         pass
+
+    for line in raw.splitlines():
+        candidate = line.strip()
+        if not candidate or not candidate.startswith(('{', '[')):
+            continue
+        try:
+            parsed_line = json.loads(candidate)
+            normalized = _normalize(parsed_line)
+            if normalized:
+                return normalized
+        except json.JSONDecodeError:
+            continue
     return {}
 
 

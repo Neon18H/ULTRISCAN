@@ -126,7 +126,56 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        structured_results = (self.object.engine_metadata or {}).get('structured_results') or {}
-        context['tools'] = structured_results.get('tools', {})
-        context['interpreted_headers'] = structured_results.get('interpreted_headers', [])
+        engine_metadata = self.object.engine_metadata if isinstance(self.object.engine_metadata, dict) else {}
+        structured_results = engine_metadata.get('structured_results') if isinstance(engine_metadata, dict) else {}
+        if not isinstance(structured_results, dict):
+            structured_results = {}
+        modules = engine_metadata.get('modules') if isinstance(engine_metadata.get('modules'), dict) else {}
+        tools = structured_results.get('tools') if isinstance(structured_results.get('tools'), dict) else {}
+        interpreted_headers = (
+            structured_results.get('interpreted_headers')
+            if isinstance(structured_results.get('interpreted_headers'), list)
+            else []
+        )
+        warnings = structured_results.get('warnings')
+        if not isinstance(warnings, list):
+            warnings = self.object.summary.get('warnings', []) if isinstance(self.object.summary, dict) else []
+        dependencies = tools.get('dependency_checks')
+        if not isinstance(dependencies, dict):
+            dependencies = structured_results.get('dependency_checks')
+        if not isinstance(dependencies, dict):
+            dependencies = self.object.summary.get('dependency_checks', {}) if isinstance(self.object.summary, dict) else {}
+
+        protections_present = [row for row in interpreted_headers if row.get('status') == 'OK']
+        protections_absent = [
+            row
+            for row in interpreted_headers
+            if row.get('status') == 'WARNING' and row.get('header') not in {'server', 'x-powered-by'}
+        ]
+        exposure_findings = [
+            row
+            for row in interpreted_headers
+            if row.get('header') in {'server', 'x-powered-by'} and row.get('status') == 'WARNING'
+        ]
+        informational_findings = [row for row in interpreted_headers if row.get('status') == 'INFO']
+
+        context['structured_results'] = structured_results
+        context['tools'] = tools
+        context['modules'] = modules
+        context['warnings'] = warnings
+        context['headers_analysis'] = {
+            'present': protections_present,
+            'absent': protections_absent,
+            'exposure': exposure_findings,
+            'informational': informational_findings,
+            'summary': {
+                'present': len(protections_present),
+                'absent': len(protections_absent),
+                'informational': len(informational_findings) + len(exposure_findings),
+            },
+        }
+        context['dependencies'] = dependencies
+        context['executed_tools'] = tools.get('executed') or structured_results.get('tools_executed') or []
+        context['omitted_tools'] = tools.get('skipped') or structured_results.get('tools_skipped') or []
+        context['interpreted_headers'] = interpreted_headers
         return context
