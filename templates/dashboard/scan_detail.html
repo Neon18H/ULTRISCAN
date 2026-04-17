@@ -18,6 +18,18 @@
     {% endif %}
     <p><b>Herramientas ejecutadas:</b> {{ object.summary.tools_executed|default:object.summary.tools|default:'-' }}</p>
     <p><b>Herramientas omitidas:</b> {{ object.summary.tools_skipped|default:'-' }}</p>
+    {% if object.summary.dependency_checks %}
+      <p><b>Dependencias detectadas:</b></p>
+      <ul>
+        {% for tool_name, check in object.summary.dependency_checks.items %}
+          <li>
+            {{ tool_name }}:
+            {% if check.available %}disponible{% else %}faltante{% endif %}
+            · {% if check.required %}requerido{% else %}opcional{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
     <p><b>Resultado parcial:</b> {% if object.summary.partial_result %}Sí{% else %}No{% endif %}</p>
     {% if object.engine_metadata.runner_metadata.stderr %}<p><b>stderr:</b><pre>{{ object.engine_metadata.runner_metadata.stderr }}</pre></p>{% endif %}
   </div>

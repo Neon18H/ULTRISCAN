@@ -10,7 +10,6 @@ RUN apt-get update \
         curl \
         ffuf \
         gobuster \
-        nikto \
         nmap \
         netcat-openbsd \
         ruby-full \
