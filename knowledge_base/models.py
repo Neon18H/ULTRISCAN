@@ -190,15 +190,28 @@ class ExternalAdvisoryCpeMatch(TimeStampedModel):
 
 
 class Exploit(TimeStampedModel):
+    class Source(models.TextChoices):
+        EXPLOIT_DB = 'exploitdb', 'ExploitDB'
+
     exploit_id = models.PositiveIntegerField(unique=True, db_index=True)
     title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
     platform = models.CharField(max_length=80, blank=True)
+    exploit_type = models.CharField(max_length=80, blank=True)
+    # Backward-compatible alias while older code still references `type`.
     type = models.CharField(max_length=80, blank=True)
     file_path = models.CharField(max_length=255, blank=True)
+    source = models.CharField(max_length=40, choices=Source.choices, default=Source.EXPLOIT_DB)
+    published_at = models.DateField(null=True, blank=True)
     cve = models.CharField(max_length=32, blank=True, db_index=True)
+    cve_ids = models.JSONField(default=list, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ['exploit_id']
+        indexes = [
+            models.Index(fields=['source', 'published_at']),
+        ]
 
     def __str__(self):
         return f'EDB-{self.exploit_id}: {self.title}'

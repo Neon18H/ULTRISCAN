@@ -178,9 +178,9 @@
                 <div class="small text-muted">{{ link.exploit.title|truncatechars:100 }}</div>
                 <div class="small text-muted font-monospace">{{ link.exploit.file_path }}</div>
               </td>
-              <td>{{ link.exploit.type|default:'-' }}</td>
+              <td>{{ link.exploit.exploit_type|default:link.exploit.type|default:'-' }}</td>
               <td>{{ link.exploit.platform|default:'-' }}</td>
-              <td><span class="badge text-bg-light border">ExploitDB</span></td>
+              <td><span class="badge text-bg-light border">{{ link.exploit.source|default:'exploitdb'|upper }}</span></td>
             </tr>
           {% endfor %}
           </tbody>
