@@ -173,3 +173,75 @@ class WebScanPipelineTests(TestCase):
         self.assertIn({'tool': 'nikto', 'reason': 'missing_binary', 'required': False}, result.summary['tools_skipped'])
         self.assertFalse(result.summary['dependency_checks']['nikto']['available'])
         self.assertGreaterEqual(result.summary['endpoints_count'], 1)
+
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.is_available')
+    def test_web_wordpress_continues_without_wpscan_binary(self, mocked_is_available, mocked_run):
+        def tool_available(tool):
+            return tool != 'wpscan'
+
+        mocked_is_available.side_effect = tool_available
+
+        def tool_result(tool, args, timeout=None):
+            if tool == 'whatweb':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='whatweb --log-json=- https://example.com',
+                    return_code=0,
+                    stdout='[{"plugins":{"WordPress":{},"HTTPServer":{"Server":"nginx"}}}]',
+                    stderr='',
+                )
+            if tool == 'gobuster':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='gobuster dir -u https://example.com ...',
+                    return_code=0,
+                    stdout='{"path":"/wp-admin","status":200}\n',
+                    stderr='',
+                )
+            if tool == 'nuclei':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='nuclei -u https://example.com -jsonl -silent',
+                    return_code=0,
+                    stdout='',
+                    stderr='',
+                )
+            if tool == 'nikto':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='nikto -h https://example.com -Format txt',
+                    return_code=0,
+                    stdout='',
+                    stderr='',
+                )
+            if tool == 'wpscan':
+                return ToolExecutionResult(
+                    tool=tool,
+                    command='wpscan --url https://example.com --format json --no-update',
+                    return_code=127,
+                    stdout='',
+                    stderr='Binary wpscan not found in PATH',
+                    missing_binary=True,
+                )
+            return ToolExecutionResult(tool=tool, command=tool, return_code=127, stdout='', stderr='missing', missing_binary=True)
+
+        mocked_run.side_effect = tool_result
+        scan = ScanExecution.objects.create(
+            organization=self.org,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            engine_metadata={'requested_scan_type': 'web_wordpress'},
+        )
+
+        result = ScanPipelineService().execute(scan)
+
+        self.assertEqual(result.summary['category'], 'web')
+        self.assertEqual(result.summary['cms'], 'wordpress')
+        self.assertIn('WordPress detectado, pero WPScan no está disponible; se omite el escaneo específico de WordPress.', result.summary['warnings'])
+        self.assertIn('Binary wpscan no disponible en worker.', result.summary['warnings'])
+        self.assertIn({'tool': 'wpscan', 'reason': 'missing_binary', 'required': True}, result.summary['tools_skipped'])
+        self.assertNotIn('wpscan', result.summary['tools_executed'])
+        self.assertIn('whatweb', result.summary['tools_available'])
+        self.assertNotIn('wpscan', result.summary['tools_available'])

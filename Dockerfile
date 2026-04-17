@@ -7,20 +7,29 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        build-essential \
         curl \
         ffuf \
+        gcc \
+        git \
         gobuster \
+        libcurl4-openssl-dev \
+        make \
         nmap \
         netcat-openbsd \
         ruby-full \
+        ruby-dev \
         unzip \
         whatweb \
+        zlib1g-dev \
     && NUCLEI_VERSION=3.3.9 \
     && curl -fsSL "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" -o /tmp/nuclei.zip \
     && unzip -q /tmp/nuclei.zip -d /tmp \
     && install -m 0755 /tmp/nuclei /usr/local/bin/nuclei \
     && rm -f /tmp/nuclei.zip /tmp/nuclei \
-    && gem install --no-document wpscan \
+    && if ! gem install --no-document wpscan; then \
+        echo "WARNING: WPScan installation failed; continuing build without wpscan binary." > /usr/local/share/wpscan-install-warning.txt; \
+      fi \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
