@@ -5,6 +5,8 @@ from django.urls import reverse
 from accounts.models import Organization, OrganizationMembership
 from assets.models import Asset
 from findings.models import Finding
+from knowledge_base.models import CVEExploit, Exploit, ExternalAdvisory, Product, RemediationTemplate, VulnerabilityRule
+from scans.models import ServiceFinding
 from scan_profiles.models import ScanProfile
 from scans.models import ScanExecution
 
@@ -58,3 +60,65 @@ class FindingDetailViewTests(TestCase):
             response,
             'Este finding no tiene contexto de correlación detallado disponible todavía.',
         )
+
+
+    def test_detail_view_renders_exploit_section_when_cve_has_public_exploit(self):
+        advisory = ExternalAdvisory.objects.create(
+            source=ExternalAdvisory.Source.NVD,
+            cve_id='CVE-2026-4242',
+            description='x',
+        )
+        exploit = Exploit.objects.create(
+            exploit_id=4242,
+            title='Public PoC',
+            platform='linux',
+            type='remote',
+            file_path='exploits/linux/remote/4242.py',
+            cve='CVE-2026-4242',
+        )
+        CVEExploit.objects.create(cve=advisory, exploit=exploit)
+
+        product = Product.objects.create(name='OpenSSH')
+        remediation = RemediationTemplate.objects.create(title='Upgrade', body='Upgrade now')
+        rule = VulnerabilityRule.objects.create(
+            title='OpenSSH CVE',
+            product=product,
+            cve='CVE-2026-4242',
+            severity='high',
+            confidence='high',
+            description='desc',
+            remediation_template=remediation,
+        )
+        service = ServiceFinding.objects.create(
+            organization=self.organization,
+            scan_execution=self.scan,
+            host='10.0.0.10',
+            port=22,
+            protocol='tcp',
+            state='open',
+            service='ssh',
+            product='OpenSSH',
+            normalized_product='OpenSSH',
+        )
+
+        finding = Finding.objects.create(
+            organization=self.organization,
+            scan_execution=self.scan,
+            asset=self.asset,
+            service_finding=service,
+            vulnerability_rule=rule,
+            title='Open SSH vulnerable',
+            description='desc',
+            remediation='',
+            severity=Finding.Severity.HIGH,
+            confidence=Finding.Confidence.MEDIUM,
+            correlation_trace={},
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('findings-detail', args=[finding.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Exploit disponible')
+        self.assertContains(response, 'EDB-4242')
+        self.assertContains(response, 'Exploitable')
