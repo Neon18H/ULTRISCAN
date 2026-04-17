@@ -18,8 +18,17 @@
 <div class="card metric-card mb-3">
   <div class="card-body">
     <h5 class="mb-2">Metadata de ejecución</h5>
-    <div><strong>Tools:</strong> {{ object.summary.tools|default:'nmap' }}</div>
-    {% if object.summary.partial_result %}
+    <div><strong>Estado renderizado:</strong> {{ status_label|default:object.get_status_display }}</div>
+    <div><strong>Tools:</strong>
+      {% if executed_tools %}
+        {{ executed_tools|join:', ' }}
+      {% elif available_tools %}
+        {{ available_tools|join:', ' }}
+      {% else %}
+        No disponible
+      {% endif %}
+    </div>
+    {% if summary.partial_result %}
     <div><strong>Resultado:</strong> <span class="badge text-bg-warning">Parcial</span></div>
     {% endif %}
     <div><strong>Command:</strong> <code>{{ object.command_executed|default:'N/A' }}</code></div>
@@ -37,21 +46,22 @@
   </div>
 </div>
 
-{% if structured_results %}
 <div class="card metric-card mb-3">
   <div class="card-body">
     <h5 class="mb-3">Resultados estructurados web</h5>
     <div class="row g-3">
-      <div class="col-md-3"><div class="small text-muted">CMS</div><div class="fw-semibold">{{ structured_results.cms|default:'-' }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Tecnologías</div><div class="fw-semibold">{{ object.summary.technologies_count|default:0 }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Endpoints</div><div class="fw-semibold">{{ object.summary.endpoints_count|default:0 }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Vulnerabilidades</div><div class="fw-semibold">{{ object.summary.vulnerabilities_count|default:0 }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Fingerprint</div><div class="fw-semibold">{% if structured_results.fingerprint_detected %}Detectado{% else %}No detectado{% endif %}</div></div>
-      <div class="col-md-9"><div class="small text-muted">Headers HTTP</div><div class="fw-semibold"><code>{{ structured_results.headers|default:'{}' }}</code></div></div>
+      <div class="col-md-3"><div class="small text-muted">CMS</div><div class="fw-semibold">{{ cms|default:'No disponible' }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Tecnologías</div><div class="fw-semibold">{{ technologies|length|default:0 }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Endpoints</div><div class="fw-semibold">{{ endpoints|length|default:0 }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Vulnerabilidades</div><div class="fw-semibold">{{ vulnerabilities|length|default:0 }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Fingerprint</div><div class="fw-semibold">{% if fingerprint %}Detectado{% else %}No disponible{% endif %}</div></div>
+      <div class="col-md-9"><div class="small text-muted">Headers HTTP</div><div class="fw-semibold"><code>{% if http_headers %}{{ http_headers }}{% else %}Sin datos{% endif %}</code></div></div>
     </div>
+    {% if not structured_results %}
+      <p class="text-muted mt-3 mb-0">Aún no hay resultados estructurados.</p>
+    {% endif %}
   </div>
 </div>
-{% endif %}
 
 <div class="card metric-card mb-3">
   <div class="card-body">
@@ -81,11 +91,11 @@
   <div class="card-body">
     <h5 class="mb-3">Resultados por módulo</h5>
     {% if tools %}
-      <div class="mb-2"><strong>Disponibles:</strong> {{ tools.available|default:'-' }}</div>
-      <div class="mb-2"><strong>Ejecutadas:</strong> {{ executed_tools|default:object.summary.tools|default:'-' }}</div>
+      <div class="mb-2"><strong>Disponibles:</strong> {% if available_tools %}{{ available_tools|join:', ' }}{% else %}Sin datos{% endif %}</div>
+      <div class="mb-2"><strong>Ejecutadas:</strong> {% if executed_tools %}{{ executed_tools|join:', ' }}{% else %}Sin datos{% endif %}</div>
     {% else %}
-      <div class="mb-2"><strong>Disponibles:</strong> {{ object.summary.tools_available|default:'-' }}</div>
-      <div class="mb-2"><strong>Ejecutadas:</strong> {{ object.summary.tools_executed|default:object.summary.tools|default:'-' }}</div>
+      <div class="mb-2"><strong>Disponibles:</strong> Sin datos</div>
+      <div class="mb-2"><strong>Ejecutadas:</strong> Sin datos</div>
     {% endif %}
     {% if omitted_tools %}
       <div class="mb-3"><strong>Omitidas:</strong>
@@ -115,6 +125,9 @@
           {% endfor %}
         </ul>
       </div>
+    {% endif %}
+    {% if not modules %}
+      <div class="alert alert-light border">Aún no hay resultados estructurados por módulo.</div>
     {% endif %}
     <ul class="list-group list-group-flush">
       {% for module, result in modules.items %}

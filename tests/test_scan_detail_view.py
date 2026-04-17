@@ -50,3 +50,20 @@ class ScanDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Resultados por módulo')
 
+    def test_scan_detail_renders_with_invalid_json_payloads(self):
+        scan = ScanExecution.objects.create(
+            organization=self.organization,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            status=ScanExecution.Status.QUEUED,
+            engine_metadata='broken-metadata',
+            summary='broken-summary',
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('scans-detail', args=[scan.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Queued')
+        self.assertContains(response, 'Aún no hay resultados estructurados')

@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
@@ -16,6 +18,8 @@ from .forms import CreateScanForm, SCAN_TYPE_HELP, SCAN_TYPE_TO_PROFILE
 from .models import ScanExecution
 from .serializers import ScanExecutionSerializer
 from .tasks import run_scan_task
+
+logger = logging.getLogger(__name__)
 
 
 class ScanExecutionViewSet(TenantModelViewSetMixin, viewsets.ModelViewSet):
@@ -116,6 +120,116 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
     model = ScanExecution
     template_name = 'scans/detail.html'
 
+    @staticmethod
+    def _as_dict(value):
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _as_list(value):
+        return value if isinstance(value, list) else []
+
+    def _normalize_scan_results(self):
+        summary = self._as_dict(self.object.summary)
+        engine_metadata = self._as_dict(self.object.engine_metadata)
+        if not isinstance(self.object.summary, dict):
+            logger.warning('Scan %s has non-dict summary payload. Falling back to empty dict.', self.object.id)
+        if not isinstance(self.object.engine_metadata, dict):
+            logger.warning('Scan %s has non-dict engine_metadata payload. Falling back to empty dict.', self.object.id)
+        structured_results = self._as_dict(engine_metadata.get('structured_results'))
+        tools = self._as_dict(structured_results.get('tools'))
+        modules = self._as_dict(engine_metadata.get('modules'))
+
+        warnings = self._as_list(structured_results.get('warnings'))
+        if not warnings:
+            warnings = self._as_list(summary.get('warnings'))
+
+        interpreted_headers = self._as_list(structured_results.get('interpreted_headers'))
+        dependencies = self._as_dict(tools.get('dependency_checks'))
+        if not dependencies:
+            dependencies = self._as_dict(structured_results.get('dependency_checks'))
+        if not dependencies:
+            dependencies = self._as_dict(summary.get('dependency_checks'))
+
+        available_tools = self._as_list(tools.get('available'))
+        executed_tools = self._as_list(tools.get('executed'))
+        omitted_tools = self._as_list(tools.get('skipped'))
+
+        if not available_tools:
+            available_tools = self._as_list(summary.get('tools_available'))
+        if not executed_tools:
+            executed_tools = self._as_list(structured_results.get('tools_executed')) or self._as_list(summary.get('tools_executed'))
+        if not omitted_tools:
+            omitted_tools = self._as_list(structured_results.get('tools_skipped'))
+
+        protections_present = [row for row in interpreted_headers if isinstance(row, dict) and row.get('status') == 'OK']
+        protections_absent = [
+            row
+            for row in interpreted_headers
+            if isinstance(row, dict)
+            and row.get('status') == 'WARNING'
+            and row.get('header') not in {'server', 'x-powered-by'}
+        ]
+        exposure_findings = [
+            row
+            for row in interpreted_headers
+            if isinstance(row, dict)
+            and row.get('header') in {'server', 'x-powered-by'}
+            and row.get('status') == 'WARNING'
+        ]
+        informational_findings = [
+            row for row in interpreted_headers if isinstance(row, dict) and row.get('status') == 'INFO'
+        ]
+
+        technologies = self._as_list(structured_results.get('technologies'))
+        endpoints = self._as_list(structured_results.get('endpoints'))
+        vulnerabilities = self._as_list(structured_results.get('vulnerabilities'))
+        http_headers = self._as_dict(structured_results.get('headers'))
+        metadata = self._as_dict(structured_results.get('metadata'))
+
+        return {
+            'summary': summary,
+            'engine_metadata': engine_metadata,
+            'structured_results': structured_results,
+            'tools': tools,
+            'warnings': warnings,
+            'modules': modules,
+            'available_tools': available_tools,
+            'executed_tools': executed_tools,
+            'omitted_tools': omitted_tools,
+            'dependencies': dependencies,
+            'headers_analysis': {
+                'present': protections_present,
+                'absent': protections_absent,
+                'exposure': exposure_findings,
+                'informational': informational_findings,
+                'summary': {
+                    'present': len(protections_present),
+                    'absent': len(protections_absent),
+                    'informational': len(informational_findings) + len(exposure_findings),
+                },
+            },
+            'interpreted_headers': interpreted_headers,
+            'technologies': technologies,
+            'endpoints': endpoints,
+            'vulnerabilities': vulnerabilities,
+            'fingerprint': structured_results.get('fingerprint') or {},
+            'cms': structured_results.get('cms') or '',
+            'http_headers': http_headers,
+            'metadata': metadata,
+            'status_label': self._build_status_label(summary),
+        }
+
+    def _build_status_label(self, summary):
+        if self.object.status in {ScanExecution.Status.QUEUED, ScanExecution.Status.RUNNING}:
+            return self.object.get_status_display()
+        if self.object.status == ScanExecution.Status.FAILED:
+            return 'Failed'
+        if summary.get('partial_result'):
+            return 'Partial'
+        if self.object.status == ScanExecution.Status.COMPLETED:
+            return 'Completed'
+        return self.object.get_status_display()
+
     def get_queryset(self):
         return (
             super()
@@ -126,56 +240,5 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        engine_metadata = self.object.engine_metadata if isinstance(self.object.engine_metadata, dict) else {}
-        structured_results = engine_metadata.get('structured_results') if isinstance(engine_metadata, dict) else {}
-        if not isinstance(structured_results, dict):
-            structured_results = {}
-        modules = engine_metadata.get('modules') if isinstance(engine_metadata.get('modules'), dict) else {}
-        tools = structured_results.get('tools') if isinstance(structured_results.get('tools'), dict) else {}
-        interpreted_headers = (
-            structured_results.get('interpreted_headers')
-            if isinstance(structured_results.get('interpreted_headers'), list)
-            else []
-        )
-        warnings = structured_results.get('warnings')
-        if not isinstance(warnings, list):
-            warnings = self.object.summary.get('warnings', []) if isinstance(self.object.summary, dict) else []
-        dependencies = tools.get('dependency_checks')
-        if not isinstance(dependencies, dict):
-            dependencies = structured_results.get('dependency_checks')
-        if not isinstance(dependencies, dict):
-            dependencies = self.object.summary.get('dependency_checks', {}) if isinstance(self.object.summary, dict) else {}
-
-        protections_present = [row for row in interpreted_headers if row.get('status') == 'OK']
-        protections_absent = [
-            row
-            for row in interpreted_headers
-            if row.get('status') == 'WARNING' and row.get('header') not in {'server', 'x-powered-by'}
-        ]
-        exposure_findings = [
-            row
-            for row in interpreted_headers
-            if row.get('header') in {'server', 'x-powered-by'} and row.get('status') == 'WARNING'
-        ]
-        informational_findings = [row for row in interpreted_headers if row.get('status') == 'INFO']
-
-        context['structured_results'] = structured_results
-        context['tools'] = tools
-        context['modules'] = modules
-        context['warnings'] = warnings
-        context['headers_analysis'] = {
-            'present': protections_present,
-            'absent': protections_absent,
-            'exposure': exposure_findings,
-            'informational': informational_findings,
-            'summary': {
-                'present': len(protections_present),
-                'absent': len(protections_absent),
-                'informational': len(informational_findings) + len(exposure_findings),
-            },
-        }
-        context['dependencies'] = dependencies
-        context['executed_tools'] = tools.get('executed') or structured_results.get('tools_executed') or []
-        context['omitted_tools'] = tools.get('skipped') or structured_results.get('tools_skipped') or []
-        context['interpreted_headers'] = interpreted_headers
+        context.update(self._normalize_scan_results())
         return context
