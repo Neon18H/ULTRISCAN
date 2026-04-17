@@ -26,8 +26,11 @@ class ToolExecutionResult:
 class ExternalToolRunner:
     timeout_seconds = 240
 
+    def is_available(self, tool: str) -> bool:
+        return shutil.which(tool) is not None
+
     def run(self, tool: str, args: list[str], *, timeout: int | None = None) -> ToolExecutionResult:
-        if shutil.which(tool) is None:
+        if not self.is_available(tool):
             return ToolExecutionResult(
                 tool=tool,
                 command=' '.join([tool, *args]),

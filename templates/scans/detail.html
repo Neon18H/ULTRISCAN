@@ -88,6 +88,28 @@
         {% endfor %}
       </div>
     {% endif %}
+    {% if object.summary.dependency_checks %}
+      <div class="mb-3">
+        <strong>Dependencias detectadas:</strong>
+        <ul class="mb-0 mt-2">
+          {% for tool_name, check in object.summary.dependency_checks.items %}
+            <li>
+              {{ tool_name }}:
+              {% if check.available %}
+                <span class="badge text-bg-success">disponible</span>
+              {% else %}
+                <span class="badge text-bg-warning">faltante</span>
+              {% endif %}
+              {% if check.required %}
+                <span class="badge text-bg-info">requerido</span>
+              {% else %}
+                <span class="badge text-bg-secondary">opcional</span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
     <ul class="list-group list-group-flush">
       {% for module, result in object.engine_metadata.modules.items %}
       <li class="list-group-item px-0">

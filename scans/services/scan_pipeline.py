@@ -243,12 +243,37 @@ class ScanPipelineService:
         tools_executed: list[str] = []
         tools_skipped: list[dict[str, Any]] = []
         warnings: list[str] = []
+        dependency_checks: dict[str, Any] = {}
         technologies: set[str] = set()
         endpoints: list[dict[str, Any]] = []
         vulnerabilities: list[dict[str, Any]] = []
         headers: dict[str, str] = {}
         cms = ''
         fingerprint_detected = False
+
+        tool_presence = {
+            'whatweb': self.external_runner.is_available('whatweb'),
+            'nuclei': self.external_runner.is_available('nuclei'),
+            'gobuster': self.external_runner.is_available('gobuster'),
+            'ffuf': self.external_runner.is_available('ffuf'),
+            'nikto': self.external_runner.is_available('nikto'),
+            'wpscan': self.external_runner.is_available('wpscan'),
+        }
+        dependency_checks = {
+            'whatweb': {'available': tool_presence['whatweb'], 'required': True},
+            'nuclei': {'available': tool_presence['nuclei'], 'required': scan_type == 'web_full'},
+            'gobuster': {'available': tool_presence['gobuster'], 'required': False},
+            'ffuf': {'available': tool_presence['ffuf'], 'required': False},
+            'gobuster_or_ffuf': {
+                'available': tool_presence['gobuster'] or tool_presence['ffuf'],
+                'required': True,
+            },
+            'nikto': {'available': tool_presence['nikto'], 'required': False},
+            'wpscan': {'available': tool_presence['wpscan'], 'required': scan_type in {'web_wordpress', 'wordpress_scan'}},
+        }
+
+        if not dependency_checks['nikto']['available']:
+            warnings.append('Nikto no disponible: se omite escaneo nikto (opcional).')
 
         def _record_module(tool_name: str, result: Any, *, required: bool = False) -> bool:
             modules[tool_name] = vars(result)
@@ -288,7 +313,14 @@ class ScanPipelineService:
             )
 
         # 2) Enumeración
-        enum_tool = 'ffuf' if scan_type in {'web_api', 'web_full'} else 'gobuster'
+        preferred_enum_tool = 'ffuf' if scan_type in {'web_api', 'web_full'} else 'gobuster'
+        fallback_enum_tool = 'gobuster' if preferred_enum_tool == 'ffuf' else 'ffuf'
+        enum_tool = preferred_enum_tool
+        if not tool_presence.get(preferred_enum_tool) and tool_presence.get(fallback_enum_tool):
+            enum_tool = fallback_enum_tool
+            warnings.append(
+                f'{preferred_enum_tool} no disponible; se usa {fallback_enum_tool} como fallback para enumeración web.'
+            )
         enum_args = (
             ['-u', f'{target}/FUZZ', '-w', '/usr/share/wordlists/dirb/common.txt', '-json']
             if enum_tool == 'ffuf'
@@ -451,6 +483,7 @@ class ScanPipelineService:
             'tools': tools_executed,
             'tools_executed': tools_executed,
             'tools_skipped': tools_skipped,
+            'dependency_checks': dependency_checks,
             'warnings': warnings,
             'partial_result': bool(tools_skipped or warnings),
             'technologies_count': len(technologies),
@@ -470,6 +503,7 @@ class ScanPipelineService:
                 'cms': cms,
                 'tools_executed': tools_executed,
                 'tools_skipped': tools_skipped,
+                'dependency_checks': dependency_checks,
                 'warnings': warnings,
                 'partial_result': bool(tools_skipped or warnings),
                 'fingerprint_detected': fingerprint_detected,
