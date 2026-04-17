@@ -10,6 +10,8 @@ from .views import (
     DashboardHomeView,
     FindingDetailView,
     ExecutiveSummaryPdfView,
+    ExploitDetailView,
+    ExploitListView,
     FindingListView,
     FindingsTechnicalPdfView,
     KnowledgeBaseDetailView,
@@ -35,4 +37,6 @@ urlpatterns = [
     path('findings/<int:pk>/', FindingDetailView.as_view(), name='findings-detail'),
     path('knowledge-base/', KnowledgeBaseListView.as_view(), name='knowledge-base-list'),
     path('knowledge-base/<slug:cve_id>/', KnowledgeBaseDetailView.as_view(), name='knowledge-base-detail'),
+    path('exploits/', ExploitListView.as_view(), name='exploit-list'),
+    path('exploits/<int:exploit_id>/', ExploitDetailView.as_view(), name='exploit-detail'),
 ]
