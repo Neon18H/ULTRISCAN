@@ -261,6 +261,8 @@ class ScanListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):
 
 class ScanArchiveToggleView(LoginRequiredMixin, TenantQuerysetMixin, View):
     archive = True
+    model = ScanExecution
+    queryset = ScanExecution.objects.select_related('organization', 'asset', 'profile')
 
     def post(self, request, *args, **kwargs):
         scan = self.get_queryset().filter(pk=kwargs.get('pk')).first()
@@ -472,15 +474,15 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         return deduped
 
     def _build_status_label(self, summary):
-        if self.object.status in {ScanExecution.Status.QUEUED, ScanExecution.Status.RUNNING}:
-            return self.object.get_status_display()
-        if self.object.status == ScanExecution.Status.FAILED:
+        if self.object.rendered_status in {ScanExecution.Status.QUEUED, ScanExecution.Status.RUNNING}:
+            return self.object.rendered_status_display
+        if self.object.rendered_status == ScanExecution.Status.FAILED:
             return 'Failed'
         if summary.get('partial_result'):
             return 'Partial'
-        if self.object.status == ScanExecution.Status.COMPLETED:
+        if self.object.rendered_status == ScanExecution.Status.COMPLETED:
             return 'Completed'
-        return self.object.get_status_display()
+        return self.object.rendered_status_display
 
     def get_queryset(self):
         return (

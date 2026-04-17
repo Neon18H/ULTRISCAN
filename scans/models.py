@@ -59,7 +59,39 @@ class ScanExecution(TimeStampedModel):
 
     @property
     def progress_stage_label(self) -> str:
-        return self.STAGE_LABELS.get(self.progress_stage, self.progress_stage.replace('_', ' ').title())
+        return self.STAGE_LABELS.get(self.rendered_progress_stage, self.rendered_progress_stage.replace('_', ' ').title())
+
+    @property
+    def rendered_status(self) -> str:
+        return self.status
+
+    @property
+    def rendered_status_display(self) -> str:
+        if self.rendered_status == self.Status.COMPLETED:
+            return 'Completed'
+        if self.rendered_status == self.Status.FAILED:
+            return 'Failed'
+        return self.get_status_display()
+
+    @property
+    def rendered_progress_percent(self) -> int:
+        if self.status == self.Status.COMPLETED:
+            return 100
+        return max(0, min(100, int(self.progress_percent or 0)))
+
+    @property
+    def rendered_progress_stage(self) -> str:
+        if self.status == self.Status.COMPLETED:
+            return 'completed'
+        if self.status == self.Status.FAILED:
+            return 'failed'
+        if self.status == self.Status.CANCELLED:
+            return 'cancelled'
+        if self.status == self.Status.RUNNING:
+            return self.progress_stage or 'discovery'
+        if self.status in {self.Status.QUEUED, self.Status.PENDING}:
+            return 'queued'
+        return self.progress_stage or 'queued'
 
 
 class RawEvidence(TimeStampedModel):
