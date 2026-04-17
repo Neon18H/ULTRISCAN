@@ -68,6 +68,8 @@ class AIFindingEnrichmentService:
             base_url=getattr(settings, 'OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1'),
             model=getattr(settings, 'OPENROUTER_MODEL', ''),
             timeout=getattr(settings, 'OPENROUTER_TIMEOUT', 45),
+            http_referer=getattr(settings, 'OPENROUTER_HTTP_REFERER', ''),
+            app_title=getattr(settings, 'OPENROUTER_APP_TITLE', 'Vulnsight AI Enrichment'),
         )
 
     def enrich_findings(self, findings) -> int:
@@ -156,6 +158,7 @@ class AIFindingEnrichmentService:
             'detected_version': (service.normalized_version if service else '') or (service.raw_version if service else '') or (service.version if service else ''),
             'endpoints': structured.get('endpoints') or [],
             'headers_findings': structured.get('interpreted_headers') or [],
+            'technologies_detected': structured.get('technologies') or [],
             'findings_base': {
                 'title': finding.title,
                 'description': finding.description,
@@ -188,13 +191,14 @@ class AIFindingEnrichmentService:
         }
 
     def _persist_enrichment(self, finding, result: dict[str, Any]) -> None:
+        generated_at = timezone.now()
         enriched_payload = {
             **result,
             'status': 'success',
             'status_message': 'Enriquecimiento IA generado correctamente.',
             'provider': 'openrouter',
             'model': self.client.model,
-            'generated_at': timezone.now().isoformat(),
+            'generated_at': generated_at.isoformat(),
         }
         finding.ai_enrichment = enriched_payload
         finding.ai_title = (result.get('finding_title') or '')[:255]
@@ -206,6 +210,7 @@ class AIFindingEnrichmentService:
         finding.ai_tags = result.get('ai_tags') or []
         finding.ai_owasp_category = (result.get('owasp_category') or '')[:120]
         finding.ai_cwe = (result.get('cwe') or '')[:80]
+        finding.ai_generated_at = generated_at
         finding.save(
             update_fields=[
                 'ai_enrichment',
@@ -218,6 +223,7 @@ class AIFindingEnrichmentService:
                 'ai_tags',
                 'ai_owasp_category',
                 'ai_cwe',
+                'ai_generated_at',
                 'updated_at',
             ]
         )
@@ -231,7 +237,8 @@ class AIFindingEnrichmentService:
             'model': self.client.model,
             'generated_at': timezone.now().isoformat(),
         }
-        finding.save(update_fields=['ai_enrichment', 'updated_at'])
+        finding.ai_generated_at = None
+        finding.save(update_fields=['ai_enrichment', 'ai_generated_at', 'updated_at'])
         logger.info('AI enrichment skipped for finding_id=%s reason=%s', finding.id, reason)
 
     def _mark_failed(self, finding, *, message: str, detail: str) -> None:
@@ -243,5 +250,6 @@ class AIFindingEnrichmentService:
             'model': self.client.model,
             'generated_at': timezone.now().isoformat(),
         }
-        finding.save(update_fields=['ai_enrichment', 'updated_at'])
+        finding.ai_generated_at = None
+        finding.save(update_fields=['ai_enrichment', 'ai_generated_at', 'updated_at'])
         logger.warning('AI enrichment error persisted for finding_id=%s', finding.id)

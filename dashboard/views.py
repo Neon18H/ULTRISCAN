@@ -1,6 +1,7 @@
 from django.contrib import messages
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
+from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.mixins import UserPassesTestMixin
@@ -529,8 +530,13 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         )
         context['ai_context'] = self.object.ai_enrichment if isinstance(self.object.ai_enrichment, dict) else {}
         ai_status = (context['ai_context'].get('status') or '').strip().lower()
+        openrouter_configured = bool((getattr(settings, 'OPENROUTER_API_KEY', '') or '').strip())
+        if not ai_status:
+            ai_status = 'pending' if openrouter_configured else 'not_configured'
         status_messages = {
-            'skipped': 'OpenRouter no configurado. Enriquecimiento IA omitido.',
+            'not_configured': 'OpenRouter no configurado.',
+            'skipped': context['ai_context'].get('status_message') or 'OpenRouter no configurado.',
+            'pending': 'Enriquecimiento IA pendiente.',
             'error': context['ai_context'].get('status_message') or 'Error al generar enriquecimiento IA.',
             'success': context['ai_context'].get('status_message') or '',
         }

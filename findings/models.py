@@ -53,6 +53,7 @@ class Finding(TimeStampedModel):
     ai_tags = models.JSONField(default=list, blank=True)
     ai_owasp_category = models.CharField(max_length=120, blank=True)
     ai_cwe = models.CharField(max_length=80, blank=True)
+    ai_generated_at = models.DateTimeField(null=True, blank=True)
     ai_enrichment = models.JSONField(default=dict, blank=True)
 
     class Meta:
