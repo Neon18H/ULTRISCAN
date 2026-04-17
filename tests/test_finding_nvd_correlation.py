@@ -157,3 +157,51 @@ class FindingNvdCorrelationTests(TestCase):
 
         payload = FindingNvdCorrelationService()._no_match_payload(finding)
         self.assertEqual(payload['status'], 'exposure')
+
+    def test_does_not_return_candidate_when_only_description_matches_without_cpe_product_match(self):
+        ExternalAdvisory.objects.create(
+            source=ExternalAdvisory.Source.NVD,
+            cve_id='CVE-2026-9999',
+            description='OpenSSH vulnerable text mention without valid CPE product tuple',
+            severity='high',
+        )
+        advisory_bad_cpe = ExternalAdvisory.objects.create(
+            source=ExternalAdvisory.Source.NVD,
+            cve_id='CVE-2026-9998',
+            description='Unrelated component',
+            severity='high',
+        )
+        ExternalAdvisoryCpeMatch.objects.create(
+            advisory=advisory_bad_cpe,
+            vulnerable=True,
+            criteria='cpe:2.3:a:othervendor:otherproduct:*:*:*:*:*:*:*:*',
+        )
+
+        service = ServiceFinding.objects.create(
+            organization=self.org,
+            scan_execution=self.scan,
+            host='10.1.1.10',
+            port=22,
+            protocol='tcp',
+            state='open',
+            service='ssh',
+            product='OpenSSH',
+            normalized_product='OpenSSH',
+            version='8.7',
+            normalized_version='8.7',
+        )
+        finding = Finding.objects.create(
+            organization=self.org,
+            asset=self.asset,
+            scan_execution=self.scan,
+            service_finding=service,
+            title='OpenSSH service detected',
+            description='OpenSSH fingerprint detected',
+            remediation='r',
+            severity='medium',
+            confidence='medium',
+            status=Finding.Status.OPEN,
+        )
+
+        payload = FindingNvdCorrelationService().correlate(finding)
+        self.assertEqual(payload['status'], 'none')

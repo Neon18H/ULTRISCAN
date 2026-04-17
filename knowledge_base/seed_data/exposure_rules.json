@@ -165,5 +165,45 @@
     "cvss": 7.2,
     "description": "A likely administrative or management web interface is exposed on a non-standard port based on service banner evidence.",
     "remediation": "place_service_behind_vpn_or_allowlist"
+  },
+  {
+    "title": "HTTP service exposed on alternate web ports",
+    "product": "Generic HTTP Service",
+    "protocol": "tcp",
+    "required_state": "open",
+    "evidence_type": "network_exposure",
+    "required_evidence": "port:8080",
+    "severity": "medium",
+    "confidence": "medium",
+    "cvss": 5.6,
+    "description": "HTTP service exposure on alternate ports increases attack surface and often indicates admin endpoints.",
+    "remediation": "place_service_behind_vpn_or_allowlist"
+  },
+  {
+    "title": "HTTPS service exposed on 443",
+    "product": "Generic HTTPS Service",
+    "service_name": "https",
+    "port": 443,
+    "protocol": "tcp",
+    "required_state": "open",
+    "evidence_type": "network_exposure",
+    "severity": "low",
+    "confidence": "high",
+    "cvss": 3.2,
+    "description": "HTTPS endpoint is externally reachable. Confirm this exposure is intended and protected by hardened TLS and auth controls.",
+    "remediation": "restrict_service_exposure"
+  },
+  {
+    "title": "Apache HTTP Server exposed",
+    "product": "Apache HTTP Server",
+    "service_name": "http",
+    "protocol": "tcp",
+    "required_state": "open",
+    "evidence_type": "network_exposure",
+    "severity": "low",
+    "confidence": "medium",
+    "cvss": 3.4,
+    "description": "Apache HTTP Server is externally exposed. Validate if public exposure is required and hardened.",
+    "remediation": "restrict_service_exposure"
   }
 ]

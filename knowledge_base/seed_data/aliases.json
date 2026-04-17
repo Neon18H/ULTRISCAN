@@ -1,23 +1,102 @@
 [
-  {"alias": "Apache httpd", "product": "Apache HTTP Server"},
-  {"alias": "apache", "product": "Apache HTTP Server"},
-  {"alias": "OpenSSH", "product": "OpenSSH"},
-  {"alias": "nginx", "product": "nginx"},
-  {"alias": "wordpress", "product": "WordPress"},
-  {"alias": "php", "product": "PHP"},
-  {"alias": "ms-sql-s", "product": "Microsoft SQL Server"},
-  {"alias": "microsoft-ds", "product": "SMB / Microsoft-DS"},
-  {"alias": "smb", "product": "SMB / Microsoft-DS"},
-  {"alias": "http", "product": "Generic HTTP Service"},
-  {"alias": "https", "product": "Generic HTTPS Service"},
-  {"alias": "https-alt", "product": "Generic HTTPS Service"},
-  {"alias": "ssl/http", "product": "Generic HTTPS Service"},
-  {"alias": "radan-http", "product": "Generic HTTP Service"},
-  {"alias": "http-alt", "product": "Generic HTTP Service"},
-  {"alias": "ftp", "product": "FTP"},
-  {"alias": "mysql", "product": "MySQL"},
-  {"alias": "pptp", "product": "PPTP"},
-  {"alias": "sip", "product": "SIP"},
-  {"alias": "elasticsearch", "product": "Elasticsearch"},
-  {"alias": "wap-wsp", "product": "Elasticsearch"}
+  {
+    "alias": "Apache httpd",
+    "product": "Apache HTTP Server"
+  },
+  {
+    "alias": "apache",
+    "product": "Apache HTTP Server"
+  },
+  {
+    "alias": "OpenSSH",
+    "product": "OpenSSH"
+  },
+  {
+    "alias": "nginx",
+    "product": "nginx"
+  },
+  {
+    "alias": "wordpress",
+    "product": "WordPress"
+  },
+  {
+    "alias": "php",
+    "product": "PHP"
+  },
+  {
+    "alias": "ms-sql-s",
+    "product": "Microsoft SQL Server"
+  },
+  {
+    "alias": "microsoft-ds",
+    "product": "SMB / Microsoft-DS"
+  },
+  {
+    "alias": "smb",
+    "product": "SMB / Microsoft-DS"
+  },
+  {
+    "alias": "http",
+    "product": "Generic HTTP Service"
+  },
+  {
+    "alias": "https",
+    "product": "Generic HTTPS Service"
+  },
+  {
+    "alias": "https-alt",
+    "product": "Generic HTTPS Service"
+  },
+  {
+    "alias": "ssl/http",
+    "product": "Generic HTTPS Service"
+  },
+  {
+    "alias": "radan-http",
+    "product": "Generic HTTP Service"
+  },
+  {
+    "alias": "http-alt",
+    "product": "Generic HTTP Service"
+  },
+  {
+    "alias": "ftp",
+    "product": "FTP"
+  },
+  {
+    "alias": "mysql",
+    "product": "MySQL"
+  },
+  {
+    "alias": "pptp",
+    "product": "PPTP"
+  },
+  {
+    "alias": "sip",
+    "product": "SIP"
+  },
+  {
+    "alias": "elasticsearch",
+    "product": "Elasticsearch"
+  },
+  {
+    "alias": "wap-wsp",
+    "product": "Elasticsearch"
+  },
+  {
+    "alias": "ssh",
+    "product": "OpenSSH"
+  },
+  {
+    "alias": "vsftpd",
+    "product": "vsftpd"
+  },
+  {
+    "alias": "apache http server",
+    "product": "Apache HTTP Server"
+  },
+  {
+    "alias": "mysql community server",
+    "product": "MySQL"
+  }
 ]

@@ -20,6 +20,7 @@ class ParsedService:
     product: str = ''
     version: str = ''
     extrainfo: str = ''
+    cpe: str = ''
     banner: str = ''
     scripts: list[ParsedPortScript] = field(default_factory=list)
 
@@ -32,6 +33,7 @@ class ParsedService:
             'product': self.product,
             'version': self.version,
             'extrainfo': self.extrainfo,
+            'cpe': self.cpe,
             'banner': self.banner,
             'scripts': [vars(script) for script in self.scripts],
         }
@@ -102,6 +104,7 @@ class NmapXmlParser:
                         product=service_node.attrib.get('product', '') if service_node is not None else '',
                         version=service_node.attrib.get('version', '') if service_node is not None else '',
                         extrainfo=extrainfo,
+                        cpe=service_node.attrib.get('cpe', '') if service_node is not None else '',
                         banner=banner,
                         scripts=scripts,
                     )

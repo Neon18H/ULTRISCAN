@@ -129,6 +129,8 @@ class NmapRunner:
             scan_truncated = True
             return_code = 124
             stdout = exc.stdout or ''
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode('utf-8', errors='replace')
             stderr = (
                 f'Nmap scan timed out after {timeout_seconds} seconds '
                 f'and output may be truncated.'

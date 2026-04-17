@@ -298,6 +298,15 @@ class CorrelationService:
         }
 
     def _build_trace(self, *, scan_execution, service, rule, rule_kind: str, raw_evidence, reasons: list[str]) -> dict[str, Any]:
+        matched_port_cpe = ''
+        if raw_evidence:
+            for parsed_port in (raw_evidence.payload or {}).get('ports') or []:
+                if (
+                    parsed_port.get('port') == service.port
+                    and (parsed_port.get('protocol') or '').lower() == (service.protocol or '').lower()
+                ):
+                    matched_port_cpe = (parsed_port.get('cpe') or '').strip()
+                    break
         return {
             'scan_execution_id': scan_execution.id,
             'rule_type': rule_kind,
@@ -318,6 +327,11 @@ class CorrelationService:
                 'product': service.product,
                 'normalized_product': service.normalized_product or '',
                 'vendor': self._get_product_metadata(service.normalized_product or service.product).get('vendor', ''),
+                'family_aliases': sorted(
+                    ProductAlias.objects.filter(product__name__iexact=service.normalized_product or service.product)
+                    .values_list('alias', flat=True)
+                ),
+                'detected_cpe': matched_port_cpe,
             },
             'detected_version': {
                 'raw_version': service.raw_version or service.version,

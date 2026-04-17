@@ -88,7 +88,18 @@ class ScanPipelineService:
     def _run_infra_pipeline(self, scan: ScanExecution, scan_type: str) -> ScanPipelineResult:
         profile = NMAP_PROFILE_BY_SCAN_TYPE.get(scan_type, 'discovery')
         run_result = self.nmap_runner.run(target=scan.asset.value, profile=profile)
-        parsed_output, parse_metadata = self._parse_infra_output(run_result.xml_output)
+        try:
+            parsed_output, parse_metadata = self._parse_infra_output(run_result.xml_output)
+        except ET.ParseError as exc:
+            raise ScanPipelineExecutionError(
+                f'No se pudo parsear la salida XML de Nmap para el perfil "{profile}" '
+                f'(salida incompleta o inválida no recuperable): {exc}',
+                command=run_result.command,
+                stdout=self._coerce_xml_text(run_result.stdout),
+                stderr=run_result.stderr,
+                retryable=False,
+                reason='nmap_parse_error',
+            ) from exc
         has_partial_data = bool(parsed_output.hosts)
         timed_out = bool((run_result.metadata or {}).get('timed_out'))
         if run_result.return_code != 0 and not has_partial_data:
@@ -122,7 +133,9 @@ class ScanPipelineService:
                     },
                 )
                 for parsed_service in parsed_host.ports:
-                    raw_version = parsed_service.version
+                    raw_version = ' '.join(
+                        part.strip() for part in [parsed_service.version, parsed_service.extrainfo] if part and part.strip()
+                    ).strip()
                     ServiceFinding.objects.create(
                         organization=scan.organization,
                         scan_execution=scan,
@@ -164,33 +177,64 @@ class ScanPipelineService:
         }
         return ScanPipelineResult(summary=summary, command_executed=run_result.command, engine_metadata=metadata)
 
-    def _parse_infra_output(self, xml_output: str) -> tuple[Any, dict[str, Any]]:
+    def _parse_infra_output(self, xml_output: str | bytes | None) -> tuple[Any, dict[str, Any]]:
         parse_metadata: dict[str, Any] = {'recovered_partial_xml': False}
-        if not xml_output.strip():
+        xml_text = self._coerce_xml_text(xml_output)
+        if not xml_text.strip():
             return self.nmap_parser.parse('<nmaprun></nmaprun>'), parse_metadata
 
         try:
-            return self.nmap_parser.parse(xml_output), parse_metadata
+            return self.nmap_parser.parse(xml_text), parse_metadata
         except ET.ParseError:
-            recovered_xml = self._recover_partial_nmap_xml(xml_output)
+            recovered_xml = self._recover_partial_nmap_xml(xml_text)
             if recovered_xml:
                 parse_metadata['recovered_partial_xml'] = True
                 return self.nmap_parser.parse(recovered_xml), parse_metadata
             raise
 
-    def _recover_partial_nmap_xml(self, xml_output: str) -> str:
-        if '<nmaprun' not in xml_output:
+    def _coerce_xml_text(self, xml_output: str | bytes | None) -> str:
+        if xml_output is None:
+            return ''
+        if isinstance(xml_output, bytes):
+            return xml_output.decode('utf-8', errors='replace')
+        return str(xml_output)
+
+    def _recover_partial_nmap_xml(self, xml_output: str | bytes | None) -> str:
+        xml_text = self._coerce_xml_text(xml_output)
+        if not xml_text.strip():
+            return ''
+        xml_text = xml_text.replace('\x00', '')
+
+        if '</nmaprun>' in xml_text:
+            candidate = xml_text
+            if '<host' in xml_text and '</host>' not in xml_text:
+                host_blocks = re.findall(r'<host(?:\s[^>]*)?>.*?</host>', xml_text, flags=re.DOTALL)
+                root_match = re.search(r'<nmaprun[^>]*>', xml_text)
+                if root_match and host_blocks:
+                    candidate = f"{root_match.group(0)}{''.join(host_blocks)}</nmaprun>"
+            try:
+                ET.fromstring(candidate)
+                return candidate
+            except ET.ParseError:
+                pass
+
+        if '<nmaprun' not in xml_text:
             return ''
 
-        root_match = re.search(r'<nmaprun[^>]*>', xml_output)
+        root_match = re.search(r'<nmaprun[^>]*>', xml_text)
         if not root_match:
             return ''
 
-        host_blocks = re.findall(r'<host(?:\s[^>]*)?>.*?</host>', xml_output, flags=re.DOTALL)
+        host_blocks = re.findall(r'<host(?:\s[^>]*)?>.*?</host>', xml_text, flags=re.DOTALL)
         if not host_blocks:
             return ''
 
-        return f"{root_match.group(0)}{''.join(host_blocks)}</nmaprun>"
+        recovered = f"{root_match.group(0)}{''.join(host_blocks)}</nmaprun>"
+        try:
+            ET.fromstring(recovered)
+            return recovered
+        except ET.ParseError:
+            return ''
 
     def _run_web_pipeline(self, scan: ScanExecution, scan_type: str) -> ScanPipelineResult:
         target = scan.asset.value
