@@ -45,11 +45,18 @@
 {% if structured_results.scan_type == 'web_appsec' %}
 <div class="card metric-card mb-3"><div class="card-body">
   <h5 class="mb-3">AppSec Executive Summary</h5>
+  <p class="small text-muted mb-3">{{ structured_results.appsec.executive_summary|default:'Sin resumen AppSec disponible.' }}</p>
   <div class="row g-3">
     <div class="col-lg-3"><div class="small text-muted">Agresividad</div><div class="fw-semibold">{{ structured_results.aggressiveness|upper }}</div></div>
     <div class="col-lg-3"><div class="small text-muted">Módulos seleccionados</div><div class="fw-semibold">{{ structured_results.modules_selected|length }}</div></div>
-    <div class="col-lg-3"><div class="small text-muted">Endpoints sensibles</div><div class="fw-semibold">{{ structured_results.sensitive_endpoints|length }}</div></div>
-    <div class="col-lg-3"><div class="small text-muted">Parámetros sospechosos</div><div class="fw-semibold">{{ structured_results.appsec.suspicious_parameters|length }}</div></div>
+    <div class="col-lg-3"><div class="small text-muted">Módulos ejecutados / omitidos</div><div class="fw-semibold">{{ structured_results.appsec.module_totals.executed|default:0 }} / {{ structured_results.appsec.module_totals.skipped|default:0 }}</div></div>
+    <div class="col-lg-3"><div class="small text-muted">Parámetros candidatos</div><div class="fw-semibold">{{ structured_results.appsec.candidate_summary.candidate_parameters|default:structured_results.appsec.suspicious_parameters|length }}</div></div>
+  </div>
+  <div class="row g-3 mt-1">
+    <div class="col-lg-3"><div class="small text-muted">Targets XSS</div><div class="fw-semibold">{{ structured_results.appsec.candidate_summary.xss_targets|default:0 }}</div></div>
+    <div class="col-lg-3"><div class="small text-muted">Targets SQLi</div><div class="fw-semibold">{{ structured_results.appsec.candidate_summary.sqli_targets|default:0 }}</div></div>
+    <div class="col-lg-3"><div class="small text-muted">Endpoints dinámicos</div><div class="fw-semibold">{{ structured_results.appsec.candidate_summary.dynamic_endpoints|default:0 }}</div></div>
+    <div class="col-lg-3"><div class="small text-muted">Superficies auth/forms</div><div class="fw-semibold">{{ structured_results.appsec.candidate_summary.auth_endpoints|default:0 }} / {{ structured_results.appsec.candidate_summary.forms_detected|default:0 }}</div></div>
   </div>
 </div></div>
 
@@ -71,6 +78,30 @@
     </ul>
   </div></div></div>
 </div>
+{% endif %}
+
+{% if structured_results.scan_type == 'web_appsec' and structured_results.appsec.module_execution %}
+<div class="card metric-card mb-3"><div class="card-body">
+  <h5 class="mb-3">Ejecución por módulo AppSec</h5>
+  <div class="table-responsive">
+    <table class="table table-enterprise align-middle mb-0">
+      <thead><tr><th>Módulo</th><th>Status</th><th>Motivo/resultado</th><th>Targets</th><th>Parámetros</th><th>Findings</th><th>Comando</th></tr></thead>
+      <tbody>
+        {% for module in structured_results.appsec.module_execution %}
+        <tr>
+          <td class="fw-semibold">{{ module.name }}</td>
+          <td><span class="badge {% if module.status == 'executed' %}text-bg-success{% elif module.status == 'skipped' %}text-bg-secondary{% elif module.status == 'warning' %}text-bg-warning{% else %}text-bg-danger{% endif %}">{{ module.status }}</span></td>
+          <td class="small">{{ module.reason|default:'-' }}</td>
+          <td>{{ module.targets_analyzed|default:0 }}</td>
+          <td>{{ module.parameters_analyzed|default:0 }}</td>
+          <td>{{ module.findings_count|default:0 }}</td>
+          <td class="small"><code>{{ module.command|default:'-' }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>
 {% endif %}
 
 <div class="card metric-card mb-3"><div class="card-body">

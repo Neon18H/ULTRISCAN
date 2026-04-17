@@ -8,7 +8,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 from urllib import request
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from django.db import transaction
 
@@ -630,7 +630,26 @@ class ScanPipelineService:
         if scan_type in {'web_basic', 'web_full', 'web_misconfig', 'web_appsec'}:
             nikto_timeout = int(web_scan_controls.get('module_timeout') or WEB_APPSEC_PRESETS['medium']['module_timeout'])
             nikto_res = self.external_runner.run('nikto', ['-h', target, '-Format', 'txt'], timeout=nikto_timeout)
-            if _record_module('nikto', nikto_res, required=scan_type == 'web_misconfig'):
+            nikto_missing_modules = self._detect_nikto_runtime_dependency_error(nikto_res.stderr)
+            if nikto_missing_modules:
+                modules['nikto'] = self._build_skipped_module_result(
+                    'nikto',
+                    reason='missing_runtime_dependencies',
+                    detail=(
+                        'Nikto instalado pero incompleto; faltan módulos Perl: '
+                        f'{", ".join(nikto_missing_modules)}.'
+                    ),
+                    command=nikto_res.command,
+                    stderr=nikto_res.stderr,
+                    stdout=nikto_res.stdout,
+                    required=scan_type == 'web_misconfig',
+                )
+                tools_skipped.append({'tool': 'nikto', 'reason': 'missing_runtime_dependencies', 'required': scan_type == 'web_misconfig'})
+                warnings.append(
+                    'Nikto no es accionable en este worker: faltan módulos Perl '
+                    f'({", ".join(nikto_missing_modules)}). Se marca como omitido.'
+                )
+            elif _record_module('nikto', nikto_res, required=scan_type == 'web_misconfig'):
                 vulnerabilities.extend(parse_nikto_text(nikto_res.stdout))
                 RawEvidence.objects.create(
                     organization=scan.organization,
@@ -653,6 +672,7 @@ class ScanPipelineService:
                 appsec_configuration=appsec_requested,
                 controls=web_scan_controls,
                 tools_presence=tool_presence,
+                modules_data=modules,
                 record_module=_record_module,
                 warnings=warnings,
                 tools_skipped=tools_skipped,
@@ -915,6 +935,7 @@ class ScanPipelineService:
                 'whatweb_signals': whatweb_signals,
                 'executive_summary': executive_summary,
                 'appsec': appsec_observations if scan_type == 'web_appsec' else {},
+                'module_details': self._build_module_details(modules),
                 'sensitive_endpoints': appsec_sensitive_endpoints if scan_type == 'web_appsec' else [],
                 'aggressiveness': appsec_requested.get('aggressiveness'),
                 'modules_selected': appsec_requested.get('modules', []),
@@ -966,6 +987,7 @@ class ScanPipelineService:
         appsec_configuration: dict[str, Any],
         controls: dict[str, Any],
         tools_presence: dict[str, bool],
+        modules_data: dict[str, Any],
         record_module: Any,
         warnings: list[str],
         tools_skipped: list[dict[str, Any]],
@@ -973,30 +995,113 @@ class ScanPipelineService:
         modules = set(appsec_configuration.get('modules') or [])
         module_timeout = int(controls.get('module_timeout') or WEB_APPSEC_PRESETS[appsec_configuration.get('aggressiveness', 'medium')]['module_timeout'])
         prioritized_endpoints = [row for row in endpoints if row.get('priority') in {'high', 'medium'}][: min(20, len(endpoints))]
-        suspicious_params = self._extract_suspicious_parameters(prioritized_endpoints)
+        appsec_candidates = self._extract_appsec_candidates(target, prioritized_endpoints)
+        suspicious_params = appsec_candidates.get('candidate_parameters', [])
         forms_detected = [row for row in prioritized_endpoints if any(token in str(row.get('path', '')).lower() for token in ('login', 'signup', 'register', 'reset'))]
         uploads_detected = [row for row in prioritized_endpoints if 'upload' in str(row.get('path', '')).lower()]
         ssrf_patterns = [row for row in prioritized_endpoints if any(token in str(row.get('path', '')).lower() for token in ('url=', 'redirect', 'callback', 'proxy', 'fetch'))]
         auth_surface = [row for row in prioritized_endpoints if any(token in str(row.get('path', '')).lower() for token in ('auth', 'login', 'token', 'session'))]
         idor_surface = [row for row in prioritized_endpoints if any(token in str(row.get('path', '')).lower() for token in ('id=', '/users/', '/accounts/', '/orders/'))]
+        dalfox_targets = [row.get('url') for row in appsec_candidates.get('xss_targets', []) if row.get('url')]
+        sqli_targets = [row.get('url') for row in appsec_candidates.get('sqli_targets', []) if row.get('url')]
+        sqli_parameters = sorted({str(row.get('parameter') or '').lower() for row in suspicious_params if row.get('parameter')})
 
         vulns: list[dict[str, Any]] = []
-        if 'xss' in modules and tools_presence.get('dalfox') and prioritized_endpoints:
-            dalfox_target = prioritized_endpoints[0].get('url') or target
-            dalfox = self.external_runner.run('dalfox', ['url', dalfox_target, '--silence'], timeout=module_timeout)
-            if record_module('dalfox', dalfox, required=False):
-                if dalfox.stdout:
-                    vulns.append({'name': 'Potential XSS signal (dalfox)', 'severity': 'high', 'description': 'Dalfox reportó una señal potencial de XSS.', 'matched_at': dalfox_target, 'reference': 'https://owasp.org/www-community/attacks/xss/', 'type': 'dalfox', 'owasp_category': 'A03:2021-Injection', 'confidence': 'medium'})
+        if 'xss' in modules and tools_presence.get('dalfox') and dalfox_targets:
+            dalfox_findings = 0
+            dalfox_targets_scanned = 0
+            for dalfox_target in dalfox_targets[:6]:
+                dalfox = self.external_runner.run('dalfox', ['url', dalfox_target, '--silence', '--no-color'], timeout=module_timeout)
+                if record_module('dalfox', dalfox, required=False):
+                    dalfox_targets_scanned += 1
+                    if self._dalfox_has_signal(dalfox.stdout):
+                        dalfox_findings += 1
+                        vulns.append(
+                            {
+                                'name': 'Reflected XSS candidate',
+                                'severity': 'high',
+                                'description': 'Dalfox detectó una señal potencial de XSS reflejado.',
+                                'matched_at': dalfox_target,
+                                'reference': 'https://owasp.org/www-community/attacks/xss/',
+                                'type': 'dalfox',
+                                'owasp_category': 'A03:2021-Injection',
+                                'confidence': 'medium',
+                            }
+                        )
+            module_data = modules_data.get('dalfox') if isinstance(modules_data.get('dalfox'), dict) else {}
+            module_data.update(
+                {
+                    'reason': (
+                        f'Escaneo XSS ejecutado sobre {dalfox_targets_scanned} target(s); '
+                        f'{dalfox_findings} hallazgo(s).'
+                    ),
+                    'targets_analyzed': dalfox_targets_scanned,
+                    'parameters_analyzed': len({str(urlparse(target_url).query) for target_url in dalfox_targets[:6] if urlparse(target_url).query}),
+                    'findings_count': dalfox_findings,
+                }
+            )
+            modules_data['dalfox'] = module_data
+        elif 'xss' in modules and tools_presence.get('dalfox'):
+            modules_data['dalfox'] = self._build_skipped_module_result(
+                'dalfox',
+                reason='no_actionable_targets',
+                detail='No XSS-actionable URLs discovered (missing query parameters or dynamic endpoints).',
+                required=False,
+            )
+            tools_skipped.append({'tool': 'dalfox', 'reason': 'no_actionable_targets', 'required': False})
+            warnings.append('Dalfox omitido: no se detectaron URLs accionables con parámetros para validar XSS.')
         elif 'xss' in modules and not tools_presence.get('dalfox'):
             warnings.append('Módulo XSS habilitado pero dalfox no está disponible.')
             tools_skipped.append({'tool': 'dalfox', 'reason': 'missing_binary', 'required': False})
 
-        if 'sqli' in modules and tools_presence.get('sqlmap') and suspicious_params:
-            sqlmap_target = suspicious_params[0].get('url') or target
-            sqlmap = self.external_runner.run('sqlmap', ['-u', sqlmap_target, '--batch', '--risk=1', '--level=1'], timeout=module_timeout)
-            if record_module('sqlmap', sqlmap, required=False):
-                if 'is vulnerable' in (sqlmap.stdout or '').lower():
-                    vulns.append({'name': 'Potential SQL injection signal (sqlmap)', 'severity': 'high', 'description': 'sqlmap detectó un posible vector SQLi.', 'matched_at': sqlmap_target, 'reference': 'https://owasp.org/www-community/attacks/SQL_Injection', 'type': 'sqlmap', 'owasp_category': 'A03:2021-Injection', 'confidence': 'medium'})
+        if 'sqli' in modules and tools_presence.get('sqlmap') and sqli_targets:
+            sqlmap_findings = 0
+            sqlmap_targets_scanned = 0
+            for sqlmap_target in sqli_targets[:4]:
+                sqlmap = self.external_runner.run(
+                    'sqlmap',
+                    ['-u', sqlmap_target, '--batch', '--risk=1', '--level=1', '--threads=1', '--random-agent'],
+                    timeout=module_timeout,
+                )
+                if record_module('sqlmap', sqlmap, required=False):
+                    sqlmap_targets_scanned += 1
+                    if self._sqlmap_has_signal(sqlmap.stdout):
+                        sqlmap_findings += 1
+                        vulns.append(
+                            {
+                                'name': 'SQLi candidate',
+                                'severity': 'high',
+                                'description': 'sqlmap detectó un posible vector SQLi.',
+                                'matched_at': sqlmap_target,
+                                'reference': 'https://owasp.org/www-community/attacks/SQL_Injection',
+                                'type': 'sqlmap',
+                                'owasp_category': 'A03:2021-Injection',
+                                'confidence': 'medium',
+                            }
+                        )
+            module_data = modules_data.get('sqlmap') if isinstance(modules_data.get('sqlmap'), dict) else {}
+            module_data.update(
+                {
+                    'reason': (
+                        f'Escaneo SQLi ejecutado sobre {sqlmap_targets_scanned} target(s); '
+                        f'{sqlmap_findings} hallazgo(s).'
+                    ),
+                    'targets_analyzed': sqlmap_targets_scanned,
+                    'parameters_analyzed': len(sqli_parameters),
+                    'candidate_parameters': sqli_parameters[:40],
+                    'findings_count': sqlmap_findings,
+                }
+            )
+            modules_data['sqlmap'] = module_data
+        elif 'sqli' in modules and tools_presence.get('sqlmap'):
+            modules_data['sqlmap'] = self._build_skipped_module_result(
+                'sqlmap',
+                reason='no_candidate_parameters',
+                detail='No injectable parameters discovered (no GET/POST parameters available).',
+                required=False,
+            )
+            tools_skipped.append({'tool': 'sqlmap', 'reason': 'no_candidate_parameters', 'required': False})
+            warnings.append('sqlmap omitido: no se detectaron parámetros candidatos inyectables.')
         elif 'sqli' in modules and not tools_presence.get('sqlmap'):
             warnings.append('Módulo SQLi habilitado pero sqlmap no está disponible.')
             tools_skipped.append({'tool': 'sqlmap', 'reason': 'missing_binary', 'required': False})
@@ -1023,6 +1128,20 @@ class ScanPipelineService:
         sensitive_endpoints = [row for row in prioritized_endpoints if row.get('priority') == 'high']
         appsec = {
             'findings_by_family': findings_by_family,
+            'module_execution': self._build_module_details(
+                {name: data for name, data in modules_data.items() if name in {'dalfox', 'sqlmap', 'zap-baseline.py'}}
+            ),
+            'module_totals': self._build_module_status(
+                {name: data for name, data in modules_data.items() if name in {'dalfox', 'sqlmap', 'zap-baseline.py'}}
+            ),
+            'candidate_summary': {
+                'xss_targets': len(dalfox_targets),
+                'sqli_targets': len(sqli_targets),
+                'candidate_parameters': len(sqli_parameters),
+                'dynamic_endpoints': len(appsec_candidates.get('dynamic_endpoints', [])),
+                'auth_endpoints': len(appsec_candidates.get('auth_endpoints', [])),
+                'forms_detected': len(appsec_candidates.get('forms_detected', [])),
+            },
             'suspicious_parameters': suspicious_params,
             'forms_detected': forms_detected,
             'uploads_detected': uploads_detected,
@@ -1031,6 +1150,14 @@ class ScanPipelineService:
             'idor_surface': idor_surface,
             'owasp_categories': self._count_owasp_categories(vulns),
         }
+        appsec['executive_summary'] = (
+            'AppSec módulos ejecutados: '
+            f"{appsec['module_totals'].get('executed', 0)}, "
+            f"omitidos: {appsec['module_totals'].get('skipped', 0)}, "
+            f"warnings/fallas: {appsec['module_totals'].get('warning', 0) + appsec['module_totals'].get('failed', 0)}. "
+            f"Targets XSS: {appsec['candidate_summary'].get('xss_targets', 0)}, "
+            f"targets SQLi: {appsec['candidate_summary'].get('sqli_targets', 0)}."
+        )
         return vulns, appsec, sensitive_endpoints
 
     def _surface_rows(self, rows: list[dict[str, Any]], *, title: str, severity: str, category: str) -> list[dict[str, Any]]:
@@ -1061,6 +1188,66 @@ class ScanPipelineService:
                 if key in {'id', 'user', 'account', 'redirect', 'url', 'next', 'return', 'callback', 'file'}:
                     suspicious.append({'url': endpoint_url, 'parameter': key})
         return suspicious[:100]
+
+    def _extract_appsec_candidates(self, target: str, endpoints: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        xss_targets: list[dict[str, Any]] = []
+        sqli_targets: list[dict[str, Any]] = []
+        candidate_parameters: list[dict[str, Any]] = []
+        dynamic_endpoints: list[dict[str, Any]] = []
+        auth_endpoints: list[dict[str, Any]] = []
+        forms_detected: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        parameter_sqli_tokens = {
+            'id', 'item', 'user', 'uid', 'account', 'order', 'invoice', 'query', 'search', 'filter', 'sort', 'category'
+        }
+        parameter_xss_tokens = {'q', 'query', 'search', 'next', 'return', 'redirect', 'url', 'callback', 'message', 'comment'}
+        for endpoint in endpoints:
+            endpoint_url = str(endpoint.get('url') or '')
+            if not endpoint_url:
+                path = str(endpoint.get('path') or '').strip()
+                endpoint_url = f"{target.rstrip('/')}/{path.lstrip('/')}" if path else target
+            parsed = urlparse(endpoint_url)
+            path_lc = str(parsed.path or '').lower()
+            if any(token in path_lc for token in ('{', '}', ':id', '/api/', '/v1/', '/v2/', '/auth/', '/user/', '/account/')):
+                dynamic_endpoints.append(endpoint)
+            if any(token in path_lc for token in ('auth', 'login', 'signup', 'session', 'token', 'register')):
+                auth_endpoints.append(endpoint)
+                forms_detected.append(endpoint)
+            parameters = parse_qsl(parsed.query, keep_blank_values=True)
+            if not parameters:
+                continue
+            if endpoint_url in seen_urls:
+                continue
+            seen_urls.add(endpoint_url)
+            parameter_names = {k.lower().strip() for k, _ in parameters if k.strip()}
+            for parameter in sorted(parameter_names):
+                candidate_parameters.append({'url': endpoint_url, 'parameter': parameter})
+            if parameter_names.intersection(parameter_xss_tokens):
+                xss_targets.append({'url': endpoint_url, 'source': endpoint.get('source', '')})
+            if parameter_names.intersection(parameter_sqli_tokens):
+                sqli_targets.append({'url': endpoint_url, 'source': endpoint.get('source', '')})
+        if not xss_targets:
+            xss_targets = [{'url': row.get('url'), 'source': row.get('source', '')} for row in endpoints if row.get('url') and '?' in str(row.get('url'))][:10]
+        if not sqli_targets:
+            sqli_targets = [{'url': row.get('url'), 'source': row.get('source', '')} for row in endpoints if row.get('url') and '?' in str(row.get('url'))][:10]
+        return {
+            'xss_targets': xss_targets[:20],
+            'sqli_targets': sqli_targets[:20],
+            'candidate_parameters': candidate_parameters[:150],
+            'dynamic_endpoints': dynamic_endpoints[:80],
+            'auth_endpoints': auth_endpoints[:80],
+            'forms_detected': forms_detected[:80],
+        }
+
+    def _dalfox_has_signal(self, stdout: str) -> bool:
+        text = (stdout or '').lower()
+        indicators = ('vulnerable', 'triggered', 'xss', 'found')
+        return any(token in text for token in indicators)
+
+    def _sqlmap_has_signal(self, stdout: str) -> bool:
+        text = (stdout or '').lower()
+        indicators = ('is vulnerable', 'sql injection', 'injectable', 'identified the following injection point')
+        return any(token in text for token in indicators)
 
     def _count_owasp_categories(self, vulnerabilities: list[dict[str, Any]]) -> dict[str, int]:
         totals: dict[str, int] = {}
@@ -1312,13 +1499,52 @@ class ScanPipelineService:
             missing_binary=False,
         )
 
+    def _build_skipped_module_result(
+        self,
+        tool: str,
+        *,
+        reason: str,
+        detail: str,
+        command: str = '',
+        stderr: str = '',
+        stdout: str = '',
+        required: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            'tool': tool,
+            'command': command,
+            'return_code': 0,
+            'stdout': stdout,
+            'stderr': stderr,
+            'timed_out': False,
+            'missing_binary': False,
+            'state': 'skipped',
+            'reason': detail,
+            'skip_code': reason,
+            'required': required,
+            'stdout_excerpt': self._summarize_output(stdout, 400),
+            'stderr_excerpt': self._summarize_output(stderr, 400),
+            'targets_analyzed': 0,
+            'parameters_analyzed': 0,
+            'findings_count': 0,
+        }
+
+    def _detect_nikto_runtime_dependency_error(self, stderr: str) -> list[str]:
+        text = stderr or ''
+        missing_modules: list[str] = []
+        for module_name in ('JSON.pm', 'XML/Writer.pm'):
+            if module_name in text:
+                normalized = module_name.replace('.pm', '').replace('/', '::')
+                missing_modules.append(normalized)
+        return missing_modules
+
     def _serialize_module_result(self, result: ToolExecutionResult, *, required: bool = False) -> dict[str, Any]:
         if result.missing_binary:
             state = 'skipped'
         elif result.timed_out:
             state = 'failed'
         elif result.return_code == 0:
-            state = 'ok'
+            state = 'executed'
         else:
             state = 'failed' if required else 'warning'
         return {
@@ -1328,6 +1554,27 @@ class ScanPipelineService:
             'stdout_excerpt': self._summarize_output(result.stdout, 400),
             'stderr_excerpt': self._summarize_output(result.stderr, 400),
         }
+
+    def _build_module_details(self, modules: dict[str, Any]) -> list[dict[str, Any]]:
+        details: list[dict[str, Any]] = []
+        for name in sorted(modules.keys()):
+            module_data = modules.get(name)
+            if not isinstance(module_data, dict):
+                continue
+            details.append(
+                {
+                    'name': name,
+                    'status': module_data.get('state') or 'unknown',
+                    'reason': module_data.get('reason') or module_data.get('stderr_excerpt') or '',
+                    'targets_analyzed': module_data.get('targets_analyzed', 0),
+                    'parameters_analyzed': module_data.get('parameters_analyzed', 0),
+                    'findings_count': module_data.get('findings_count', 0),
+                    'command': module_data.get('command', ''),
+                    'stdout_excerpt': module_data.get('stdout_excerpt', ''),
+                    'stderr_excerpt': module_data.get('stderr_excerpt', ''),
+                }
+            )
+        return details
 
     def _summarize_output(self, raw: str, limit: int = 220) -> str:
         text = ' '.join((raw or '').split())
@@ -1568,7 +1815,7 @@ class ScanPipelineService:
         return redirects
 
     def _build_module_status(self, modules: dict[str, Any]) -> dict[str, int]:
-        totals = {'ok': 0, 'failed': 0, 'warning': 0, 'skipped': 0}
+        totals = {'executed': 0, 'failed': 0, 'warning': 0, 'skipped': 0}
         for module_data in modules.values():
             if not isinstance(module_data, dict):
                 continue
