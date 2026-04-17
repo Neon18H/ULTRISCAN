@@ -125,3 +125,7 @@ LOGOUT_REDIRECT_URL = 'login'
 
 NVD_API_KEY = env('NVD_API_KEY', default='')
 NVD_SYNC_PAGE_SIZE = env.int('NVD_SYNC_PAGE_SIZE', default=200)
+EXPLOITDB_CSV_URL = env(
+    'EXPLOITDB_CSV_URL',
+    default='https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv',
+)
