@@ -16,7 +16,7 @@ from accounts.tenancy import TenantQuerysetMixin, get_active_organization
 from core.tenant_api import TenantModelViewSetMixin
 from dashboard.reports import build_scan_report_pdf
 
-from .forms import CreateScanForm, SCAN_TYPE_HELP, SCAN_TYPE_TO_PROFILE
+from .forms import CreateScanForm, PROFILE_NAME_ALIASES, SCAN_TYPE_HELP, SCAN_TYPE_TO_PROFILE
 from .models import ScanExecution
 from .serializers import ScanExecutionSerializer
 from .tasks import run_scan_task
@@ -83,9 +83,25 @@ class ScanCreateView(LoginRequiredMixin, TemplateView):
         profile = form.cleaned_data['profile']
         scan_type = form.cleaned_data['scan_type']
         expected_profile = SCAN_TYPE_TO_PROFILE.get(scan_type)
-        if profile.name.lower() != expected_profile:
+        expected_profile_names = PROFILE_NAME_ALIASES.get(expected_profile, {expected_profile}) if expected_profile else set()
+        if expected_profile and profile.name.lower() not in expected_profile_names:
             messages.error(request, f'El tipo seleccionado requiere el perfil {expected_profile}.')
             return self.render_to_response(self.get_context_data(form=form))
+
+        appsec_configuration = {
+            'aggressiveness': form.cleaned_data.get('web_appsec_aggressiveness') or 'medium',
+            'modules': form.cleaned_data.get('web_appsec_modules') or [],
+            'controls': {
+                'rate_limit': form.cleaned_data.get('web_rate_limit'),
+                'concurrency': form.cleaned_data.get('web_concurrency'),
+                'max_depth': form.cleaned_data.get('web_max_depth'),
+                'max_endpoints': form.cleaned_data.get('web_max_endpoints'),
+                'module_timeout': form.cleaned_data.get('web_module_timeout'),
+                'exclude_paths': CreateScanForm.parse_csv_field(form.cleaned_data.get('web_excluded_paths')),
+                'allowlist_domains': CreateScanForm.parse_csv_field(form.cleaned_data.get('web_allowlist_domains')),
+                'authenticated_mode': bool(form.cleaned_data.get('web_authenticated_mode')),
+            },
+        }
 
         scan = ScanExecution.objects.create(
             organization=org,
@@ -97,6 +113,7 @@ class ScanCreateView(LoginRequiredMixin, TemplateView):
                 'requested_scan_type': scan_type,
                 'requested_module': form.cleaned_data['module'],
                 'requested_options': form.cleaned_data['options'],
+                'web_appsec': appsec_configuration,
             },
         )
         run_scan_task.delay(scan.id)

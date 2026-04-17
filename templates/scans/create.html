@@ -48,6 +48,62 @@
         <div class="form-text">Opciones adicionales auditables en metadata del scan.</div>
         {{ form.options.errors }}
       </div>
+
+      <div class="col-12"><hr><h5 class="mb-2">Configuración AppSec (web_appsec)</h5><p class="text-muted small mb-2">Estos parámetros solo aplican cuando el tipo sea <code>web_appsec</code>.</p></div>
+      <div class="col-md-4">
+        <label class="form-label">{{ form.web_appsec_aggressiveness.label }}</label>
+        {{ form.web_appsec_aggressiveness }}
+        {{ form.web_appsec_aggressiveness.errors }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">{{ form.web_rate_limit.label }}</label>
+        {{ form.web_rate_limit }}
+        {{ form.web_rate_limit.errors }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">{{ form.web_concurrency.label }}</label>
+        {{ form.web_concurrency }}
+        {{ form.web_concurrency.errors }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">{{ form.web_max_depth.label }}</label>
+        {{ form.web_max_depth }}
+        {{ form.web_max_depth.errors }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">{{ form.web_max_endpoints.label }}</label>
+        {{ form.web_max_endpoints }}
+        {{ form.web_max_endpoints.errors }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">{{ form.web_module_timeout.label }}</label>
+        {{ form.web_module_timeout }}
+        {{ form.web_module_timeout.errors }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">{{ form.web_excluded_paths.label }}</label>
+        {{ form.web_excluded_paths }}
+        {{ form.web_excluded_paths.errors }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">{{ form.web_allowlist_domains.label }}</label>
+        {{ form.web_allowlist_domains }}
+        {{ form.web_allowlist_domains.errors }}
+      </div>
+      <div class="col-12">
+        <label class="form-label d-block">{{ form.web_appsec_modules.label }}</label>
+        <div class="border rounded p-3">
+          {{ form.web_appsec_modules }}
+        </div>
+        {{ form.web_appsec_modules.errors }}
+      </div>
+      <div class="col-12">
+        <div class="form-check">
+          {{ form.web_authenticated_mode }}
+          <label class="form-check-label" for="{{ form.web_authenticated_mode.id_for_label }}">{{ form.web_authenticated_mode.label }}</label>
+        </div>
+        {{ form.web_authenticated_mode.errors }}
+      </div>
       <div class="col-12 d-flex justify-content-end gap-2">
         <a href="{% url 'scans-list' %}" class="btn btn-outline-secondary">Cancel</a>
         <button type="submit" class="btn btn-primary"><i class="bi bi-rocket-takeoff me-1"></i>Run Scan</button>

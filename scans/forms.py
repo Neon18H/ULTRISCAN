@@ -10,10 +10,29 @@ SCAN_TYPE_CHOICES = [
     ('infra_deep', 'Infra Deep (Opcional)'),
     ('nmap_services', 'Infra Services (Compat)'),
     ('web_basic', 'Web Basic'),
+    ('web_misconfig', 'Web Misconfig'),
     ('web_full', 'Web Full'),
     ('web_appsec', 'Web AppSec'),
     ('web_wordpress', 'Web WordPress'),
     ('web_api', 'Web API'),
+]
+
+WEB_APPSEC_MODULE_CHOICES = [
+    ('xss', 'XSS'),
+    ('sqli', 'SQL Injection'),
+    ('misconfig', 'Security Misconfiguration'),
+    ('csrf', 'CSRF Review'),
+    ('idor', 'Broken Access Control / IDOR surface'),
+    ('auth', 'Broken Authentication surface'),
+    ('upload', 'File Upload surface'),
+    ('ssrf', 'SSRF surface'),
+    ('endpoint_discovery', 'Endpoint Discovery / Hidden APIs'),
+]
+
+WEB_APPSEC_AGGRESSIVENESS_CHOICES = [
+    ('low', 'Low'),
+    ('medium', 'Medium'),
+    ('high', 'High'),
 ]
 
 SCAN_TYPE_HELP = {
@@ -21,9 +40,10 @@ SCAN_TYPE_HELP = {
     'nmap_full': 'Escaneo estándar de infraestructura con detección de versiones sobre top ports.',
     'infra_deep': 'Escaneo profundo opcional con más cobertura y mayor tiempo de ejecución.',
     'nmap_services': 'Compatibilidad legacy: usa el perfil estándar de infraestructura.',
-    'web_basic': 'Pipeline web base tolerante: fingerprint, headers y checks básicos con fallback.',
+    'web_basic': 'Pipeline web ligero: fingerprint, headers, tecnologías, endpoints y exposición básica.',
+    'web_misconfig': 'Pipeline web de hardening/misconfig (headers, nikto, nuclei misconfig, cookies/redirects/banners).',
     'web_full': 'Pipeline web extendido con mayor enumeración y validaciones adicionales.',
-    'web_appsec': 'Pipeline web orientado a appsec (hardening + crawling + templates appsec).',
+    'web_appsec': 'Pipeline AppSec modular (XSS/SQLi/CSRF/IDOR/Auth/Upload/SSRF/Discovery) con controles de agresividad.',
     'web_wordpress': 'Pipeline web con detección CMS y ejecución WordPress cuando aplique.',
     'web_api': 'Pipeline orientado a superficie API y endpoints dinámicos.',
 }
@@ -34,16 +54,18 @@ SCAN_TYPE_TO_PROFILE = {
     'infra_deep': 'infra_deep',
     'nmap_services': 'infra_standard',
     'web_basic': 'web_basic',
+    'web_misconfig': 'web_misconfig',
     'web_full': 'web_basic',
-    'web_appsec': 'web_basic',
+    'web_appsec': 'web_appsec',
     'web_wordpress': 'wordpress',
     'web_api': 'web_basic',
 }
 
-WEB_ONLY_SCAN_TYPES = {'web_basic', 'web_full', 'web_appsec', 'web_wordpress', 'web_api'}
+WEB_ONLY_SCAN_TYPES = {'web_basic', 'web_misconfig', 'web_full', 'web_appsec', 'web_wordpress', 'web_api'}
 PROFILE_NAME_ALIASES = {
     'infra_standard': {'infra_standard', 'full_tcp_safe'},
     'infra_deep': {'infra_deep', 'full'},
+    'web_misconfig': {'web_misconfig', 'misconfiguration'},
 }
 
 
@@ -57,6 +79,35 @@ class CreateScanForm(forms.Form):
         required=False,
         widget=forms.Textarea(attrs={'rows': 3, 'placeholder': 'Ej: top-ports=1000, timeout=120s'}),
     )
+    web_appsec_aggressiveness = forms.ChoiceField(
+        label='Agresividad AppSec',
+        required=False,
+        choices=WEB_APPSEC_AGGRESSIVENESS_CHOICES,
+        initial='medium',
+    )
+    web_appsec_modules = forms.MultipleChoiceField(
+        label='Módulos AppSec',
+        required=False,
+        choices=WEB_APPSEC_MODULE_CHOICES,
+        widget=forms.CheckboxSelectMultiple,
+        initial=[choice[0] for choice in WEB_APPSEC_MODULE_CHOICES],
+    )
+    web_rate_limit = forms.IntegerField(label='Rate limit (req/s)', required=False, min_value=1, max_value=200)
+    web_concurrency = forms.IntegerField(label='Concurrencia', required=False, min_value=1, max_value=50)
+    web_max_depth = forms.IntegerField(label='Profundidad máxima', required=False, min_value=1, max_value=10)
+    web_max_endpoints = forms.IntegerField(label='Máximo endpoints', required=False, min_value=10, max_value=20000)
+    web_module_timeout = forms.IntegerField(label='Timeout por módulo (s)', required=False, min_value=10, max_value=1800)
+    web_excluded_paths = forms.CharField(
+        label='Excluir paths (coma-separados)',
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': '/logout,/static,/health'}),
+    )
+    web_allowlist_domains = forms.CharField(
+        label='Allowlist dominios (coma-separados)',
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'example.com,api.example.com'}),
+    )
+    web_authenticated_mode = forms.BooleanField(label='Modo autenticado', required=False)
 
     def __init__(self, *args, organization=None, initial_asset=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -69,8 +120,14 @@ class CreateScanForm(forms.Form):
         if initial_asset:
             self.fields['asset'].initial = initial_asset
         self.fields['scan_type'].help_text = 'Selecciona la estrategia más adecuada para el objetivo.'
-        for field in self.fields.values():
+        for name, field in self.fields.items():
             css = 'form-select' if isinstance(field, (forms.ModelChoiceField, forms.ChoiceField)) else 'form-control'
+            if isinstance(field.widget, forms.CheckboxSelectMultiple):
+                field.widget.attrs.update({'class': 'form-check-input'})
+                continue
+            if isinstance(field, forms.BooleanField):
+                field.widget.attrs.update({'class': 'form-check-input'})
+                continue
             field.widget.attrs.update({'class': css})
 
     def clean(self):
@@ -96,6 +153,9 @@ class CreateScanForm(forms.Form):
             if profile and profile.organization_id != self.organization.id:
                 self.add_error('profile', 'Perfil fuera de la organización activa.')
 
+        if scan_type == 'web_appsec' and not cleaned.get('web_appsec_modules'):
+            self.add_error('web_appsec_modules', 'Selecciona al menos un módulo para web_appsec.')
+
         return cleaned
 
     def clean_module(self):
@@ -108,10 +168,15 @@ class CreateScanForm(forms.Form):
             'nmap_full': 'nmap',
             'infra_deep': 'nmap+nse',
             'nmap_services': 'nmap',
-            'web_basic': 'whatweb+gobuster+nikto',
-            'web_full': 'whatweb+ffuf+nuclei+nikto',
-            'web_appsec': 'whatweb+ffuf+katana+nuclei+nikto',
+            'web_basic': 'whatweb+gobuster+nikto+nuclei',
+            'web_misconfig': 'whatweb+nikto+nuclei+httpx',
+            'web_full': 'whatweb+ffuf+nuclei+nikto+katana',
+            'web_appsec': 'httpx+katana+ffuf+nuclei+dalfox+sqlmap+zap',
             'web_wordpress': 'whatweb+nuclei+wpscan',
             'web_api': 'whatweb+ffuf+nuclei',
         }
         return defaults.get(scan_type, 'nmap')
+
+    @staticmethod
+    def parse_csv_field(raw_value: str | None) -> list[str]:
+        return [item.strip() for item in (raw_value or '').split(',') if item.strip()]

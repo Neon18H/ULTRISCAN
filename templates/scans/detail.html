@@ -42,6 +42,37 @@
   </div>
 </div></div>
 
+{% if structured_results.scan_type == 'web_appsec' %}
+<div class="card metric-card mb-3"><div class="card-body">
+  <h5 class="mb-3">AppSec Executive Summary</h5>
+  <div class="row g-3">
+    <div class="col-lg-3"><div class="small text-muted">Agresividad</div><div class="fw-semibold">{{ structured_results.aggressiveness|upper }}</div></div>
+    <div class="col-lg-3"><div class="small text-muted">Módulos seleccionados</div><div class="fw-semibold">{{ structured_results.modules_selected|length }}</div></div>
+    <div class="col-lg-3"><div class="small text-muted">Endpoints sensibles</div><div class="fw-semibold">{{ structured_results.sensitive_endpoints|length }}</div></div>
+    <div class="col-lg-3"><div class="small text-muted">Parámetros sospechosos</div><div class="fw-semibold">{{ structured_results.appsec.suspicious_parameters|length }}</div></div>
+  </div>
+</div></div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body">
+    <h6 class="mb-2">Hallazgos por familia AppSec</h6>
+    <ul class="list-group list-group-flush">
+      {% for family, rows in structured_results.appsec.findings_by_family.items %}
+      <li class="list-group-item px-0 d-flex justify-content-between"><span>{{ family|upper }}</span><strong>{{ rows|length }}</strong></li>
+      {% empty %}<li class="list-group-item px-0 text-muted">Sin familias registradas.</li>{% endfor %}
+    </ul>
+  </div></div></div>
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body">
+    <h6 class="mb-2">OWASP Categories</h6>
+    <ul class="list-group list-group-flush">
+      {% for category, total in structured_results.appsec.owasp_categories.items %}
+      <li class="list-group-item px-0 d-flex justify-content-between"><span>{{ category }}</span><strong>{{ total }}</strong></li>
+      {% empty %}<li class="list-group-item px-0 text-muted">Sin categorías clasificadas.</li>{% endfor %}
+    </ul>
+  </div></div></div>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-3">
   <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body">
     <h6 class="mb-3">Distribución de hallazgos por severidad</h6>

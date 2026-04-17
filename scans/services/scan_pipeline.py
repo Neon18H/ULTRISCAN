@@ -39,7 +39,7 @@ INFRA_SCAN_TYPES = {
     'infra_standard',
     'infra_deep',
 }
-WEB_SCAN_TYPES = {'web_basic', 'web_full', 'web_wordpress', 'web_api', 'web_appsec', 'wordpress_scan'}
+WEB_SCAN_TYPES = {'web_basic', 'web_misconfig', 'web_full', 'web_wordpress', 'web_api', 'web_appsec', 'wordpress_scan'}
 
 SENSITIVE_ENDPOINT_TOKENS = (
     'admin', 'login', 'signin', 'dashboard', 'auth', 'oauth', 'api', 'graphql', 'internal', 'debug', 'backup', 'config',
@@ -92,6 +92,12 @@ HEADER_INTERPRETATION_RULES = {
         'ok_description': 'Header oculto: menor exposición de framework/backend.',
         'warning_description': 'Header expuesto: revela tecnología de backend.',
     },
+}
+
+WEB_APPSEC_PRESETS = {
+    'low': {'rate_limit': 2, 'concurrency': 1, 'max_depth': 2, 'max_endpoints': 120, 'module_timeout': 120},
+    'medium': {'rate_limit': 6, 'concurrency': 2, 'max_depth': 3, 'max_endpoints': 400, 'module_timeout': 240},
+    'high': {'rate_limit': 12, 'concurrency': 4, 'max_depth': 5, 'max_endpoints': 1000, 'module_timeout': 420},
 }
 
 
@@ -313,6 +319,8 @@ class ScanPipelineService:
         cms = ''
         fingerprint_detected = False
         whatweb_signals: list[str] = []
+        appsec_requested = self._resolve_web_appsec_configuration(scan, scan_type)
+        appsec_controls = appsec_requested.get('controls', {})
 
         normalized_target, probe_result = self._resolve_web_target(raw_target)
         target = normalized_target
@@ -336,10 +344,15 @@ class ScanPipelineService:
             'nikto': self.external_runner.is_available('nikto'),
             'katana': self.external_runner.is_available('katana'),
             'wpscan': self.external_runner.is_available('wpscan'),
+            'httpx': self.external_runner.is_available('httpx'),
+            'sqlmap': self.external_runner.is_available('sqlmap'),
+            'dalfox': self.external_runner.is_available('dalfox'),
+            'zap-baseline.py': self.external_runner.is_available('zap-baseline.py'),
+            'dirsearch': self.external_runner.is_available('dirsearch'),
         }
         dependency_checks = {
             'whatweb': {'available': tool_presence['whatweb'], 'required': True},
-            'nuclei': {'available': tool_presence['nuclei'], 'required': scan_type == 'web_full'},
+            'nuclei': {'available': tool_presence['nuclei'], 'required': scan_type in {'web_full', 'web_misconfig'}},
             'gobuster': {'available': tool_presence['gobuster'], 'required': False},
             'ffuf': {'available': tool_presence['ffuf'], 'required': False},
             'katana': {'available': tool_presence['katana'], 'required': scan_type in {'web_full', 'web_appsec'}},
@@ -347,8 +360,13 @@ class ScanPipelineService:
                 'available': tool_presence['gobuster'] or tool_presence['ffuf'],
                 'required': True,
             },
-            'nikto': {'available': tool_presence['nikto'], 'required': False},
+            'nikto': {'available': tool_presence['nikto'], 'required': scan_type in {'web_misconfig'}},
             'wpscan': {'available': tool_presence['wpscan'], 'required': scan_type in {'web_wordpress', 'wordpress_scan'}},
+            'httpx': {'available': tool_presence['httpx'], 'required': scan_type == 'web_appsec'},
+            'sqlmap': {'available': tool_presence['sqlmap'], 'required': scan_type == 'web_appsec' and 'sqli' in appsec_requested.get('modules', [])},
+            'dalfox': {'available': tool_presence['dalfox'], 'required': scan_type == 'web_appsec' and 'xss' in appsec_requested.get('modules', [])},
+            'zap-baseline.py': {'available': tool_presence['zap-baseline.py'], 'required': False},
+            'dirsearch': {'available': tool_presence['dirsearch'], 'required': False},
         }
         tools_available = sorted([tool for tool, is_available in tool_presence.items() if is_available])
 
@@ -551,52 +569,71 @@ class ScanPipelineService:
         interpreted_headers = self._interpret_headers(headers)
 
         # 3) Vulnerabilidades
-        nuclei_required = scan_type == 'web_full'
-        nuclei_templates = self._resolve_nuclei_templates()
-        if not nuclei_templates:
-            warnings.append(
-                f'No se encontraron templates de nuclei en rutas esperadas ({", ".join(self._nuclei_template_candidates())}); se omite.'
-            )
-            tools_skipped.append({'tool': 'nuclei', 'reason': 'missing_templates', 'required': nuclei_required})
-            nuclei_res = self._missing_dependency_result(
-                'nuclei',
-                f'No nuclei templates found in: {", ".join(self._nuclei_template_candidates())}',
-            )
-        else:
-            nuclei_res = self.run_nuclei(target, nuclei_templates, scan_type=scan_type)
-        if _record_module('nuclei', nuclei_res, required=nuclei_required):
-            vulnerabilities.extend(parse_nuclei_json(nuclei_res.stdout))
-            RawEvidence.objects.create(
-                organization=scan.organization,
-                scan_execution=scan,
-                source='nuclei',
-                host=target,
-                payload={'vulnerabilities': [v for v in vulnerabilities if v.get('type') == 'nuclei']},
-                raw_output=nuclei_res.stdout,
-                    metadata={
-                        'stderr': nuclei_res.stderr,
-                        'command': nuclei_res.command,
-                        'scan_type': scan_type,
-                        'templates_path': str(nuclei_templates),
-                    },
+        run_nuclei = scan_type in {'web_basic', 'web_full', 'web_appsec', 'web_misconfig', 'web_api'}
+        nuclei_required = scan_type in {'web_full', 'web_misconfig'}
+        if run_nuclei:
+            nuclei_templates = self._resolve_nuclei_templates()
+            if not nuclei_templates:
+                warnings.append(
+                    f'No se encontraron templates de nuclei en rutas esperadas ({", ".join(self._nuclei_template_candidates())}); se omite.'
                 )
+                tools_skipped.append({'tool': 'nuclei', 'reason': 'missing_templates', 'required': nuclei_required})
+                nuclei_res = self._missing_dependency_result(
+                    'nuclei',
+                    f'No nuclei templates found in: {", ".join(self._nuclei_template_candidates())}',
+                )
+            else:
+                nuclei_res = self.run_nuclei(target, nuclei_templates, scan_type=scan_type)
+            if _record_module('nuclei', nuclei_res, required=nuclei_required):
+                vulnerabilities.extend(parse_nuclei_json(nuclei_res.stdout))
+                RawEvidence.objects.create(
+                    organization=scan.organization,
+                    scan_execution=scan,
+                    source='nuclei',
+                    host=target,
+                    payload={'vulnerabilities': [v for v in vulnerabilities if v.get('type') == 'nuclei']},
+                    raw_output=nuclei_res.stdout,
+                        metadata={
+                            'stderr': nuclei_res.stderr,
+                            'command': nuclei_res.command,
+                            'scan_type': scan_type,
+                            'templates_path': str(nuclei_templates) if nuclei_templates else '',
+                        },
+                    )
 
-        nikto_res = self.external_runner.run('nikto', ['-h', target, '-Format', 'txt'])
-        if _record_module('nikto', nikto_res):
-            vulnerabilities.extend(parse_nikto_text(nikto_res.stdout))
-            RawEvidence.objects.create(
-                organization=scan.organization,
-                scan_execution=scan,
-                source='nikto',
-                host=target,
-                payload={'vulnerabilities': [v for v in vulnerabilities if v.get('type') == 'nikto']},
-                raw_output=nikto_res.stdout,
-                metadata={'stderr': nikto_res.stderr, 'command': nikto_res.command, 'scan_type': scan_type},
-            )
+        if scan_type in {'web_basic', 'web_full', 'web_misconfig', 'web_appsec'}:
+            nikto_res = self.external_runner.run('nikto', ['-h', target, '-Format', 'txt'])
+            if _record_module('nikto', nikto_res, required=scan_type == 'web_misconfig'):
+                vulnerabilities.extend(parse_nikto_text(nikto_res.stdout))
+                RawEvidence.objects.create(
+                    organization=scan.organization,
+                    scan_execution=scan,
+                    source='nikto',
+                    host=target,
+                    payload={'vulnerabilities': [v for v in vulnerabilities if v.get('type') == 'nikto']},
+                    raw_output=nikto_res.stdout,
+                    metadata={'stderr': nikto_res.stderr, 'command': nikto_res.command, 'scan_type': scan_type},
+                )
 
         # 4) CMS detection + WordPress
         tech_lc = {t.lower() for t in technologies}
         wordpress_detected = ('wordpress' in tech_lc) or (scan_type in {'web_wordpress', 'wordpress_scan'})
+        if scan_type == 'web_appsec':
+            appsec_vulnerabilities, appsec_observations, appsec_sensitive_endpoints = self._run_web_appsec_modules(
+                target=target,
+                endpoints=endpoints,
+                scan=scan,
+                appsec_configuration=appsec_requested,
+                controls=appsec_controls,
+                tools_presence=tool_presence,
+                record_module=_record_module,
+                warnings=warnings,
+                tools_skipped=tools_skipped,
+            )
+            vulnerabilities.extend(appsec_vulnerabilities)
+        else:
+            appsec_observations = {}
+            appsec_sensitive_endpoints = []
         if wordpress_detected:
             cms = 'wordpress'
             if not tool_presence.get('wpscan'):
@@ -698,17 +735,29 @@ class ScanPipelineService:
                 sev = (vuln.get('severity') or 'medium').lower()
                 if sev not in dict(Finding.Severity.choices):
                     sev = Finding.Severity.MEDIUM
+                confidence = (vuln.get('confidence') or Finding.Confidence.MEDIUM).lower()
+                if confidence not in dict(Finding.Confidence.choices):
+                    confidence = Finding.Confidence.MEDIUM
+                endpoint = vuln.get('matched_at') or vuln.get('host') or target
+                parameter = vuln.get('parameter') or ''
+                owasp_category = vuln.get('owasp_category') or ''
+                cwe = vuln.get('cwe') or ''
                 Finding.objects.get_or_create(
                     organization=scan.organization,
                     scan_execution=scan,
                     asset=scan.asset,
                     title=vuln.get('name') or 'Web vulnerability',
                     defaults={
-                        'description': vuln.get('description', ''),
-                        'remediation': 'Validar el hallazgo y aplicar actualización/configuración recomendada.',
+                        'description': (
+                            f"{vuln.get('description', '')}\n"
+                            f"Endpoint: {endpoint}\n"
+                            f"Parámetro: {parameter or 'n/a'}\n"
+                            f"Categoría OWASP/CWE: {owasp_category or cwe or 'n/a'}"
+                        ).strip(),
+                        'remediation': vuln.get('remediation') or 'Validar el hallazgo y aplicar actualización/configuración recomendada.',
                         'reference': vuln.get('reference', ''),
                         'severity': sev,
-                        'confidence': Finding.Confidence.MEDIUM,
+                        'confidence': confidence,
                         'status': Finding.Status.OPEN,
                     },
                 )
@@ -775,6 +824,8 @@ class ScanPipelineService:
             'interpreted_headers_count': len(interpreted_headers),
             'cms': cms,
             'target': target,
+            'aggressiveness': appsec_requested.get('aggressiveness'),
+            'modules_selected': appsec_requested.get('modules', []),
         }
         tools_map = {
             'available': tools_available,
@@ -835,12 +886,140 @@ class ScanPipelineService:
                 'endpoints_by_status': endpoints_by_status,
                 'whatweb_signals': whatweb_signals,
                 'executive_summary': executive_summary,
+                'appsec': appsec_observations if scan_type == 'web_appsec' else {},
+                'sensitive_endpoints': appsec_sensitive_endpoints if scan_type == 'web_appsec' else [],
+                'aggressiveness': appsec_requested.get('aggressiveness'),
+                'modules_selected': appsec_requested.get('modules', []),
+                'scan_controls': appsec_controls,
             },
         }
         command_executed = '; '.join(
             module['command'] for module in modules.values() if isinstance(module, dict) and module.get('command')
         )
         return ScanPipelineResult(summary=summary, command_executed=command_executed, engine_metadata=metadata)
+
+    def _resolve_web_appsec_configuration(self, scan: ScanExecution, scan_type: str) -> dict[str, Any]:
+        defaults = {'aggressiveness': 'medium', 'modules': [], 'controls': WEB_APPSEC_PRESETS['medium'].copy()}
+        if scan_type != 'web_appsec':
+            return defaults
+        raw = (scan.engine_metadata or {}).get('web_appsec') or {}
+        aggressiveness = str(raw.get('aggressiveness') or 'medium').lower()
+        if aggressiveness not in WEB_APPSEC_PRESETS:
+            aggressiveness = 'medium'
+        modules = raw.get('modules') or ['xss', 'sqli', 'misconfig', 'csrf', 'idor', 'auth', 'upload', 'ssrf', 'endpoint_discovery']
+        modules = [str(module).strip().lower() for module in modules if str(module).strip()]
+        controls = {**WEB_APPSEC_PRESETS[aggressiveness], **(raw.get('controls') or {})}
+        controls['exclude_paths'] = [str(v).strip() for v in controls.get('exclude_paths', []) if str(v).strip()]
+        controls['allowlist_domains'] = [str(v).strip().lower() for v in controls.get('allowlist_domains', []) if str(v).strip()]
+        return {'aggressiveness': aggressiveness, 'modules': modules, 'controls': controls}
+
+    def _run_web_appsec_modules(
+        self,
+        *,
+        target: str,
+        endpoints: list[dict[str, Any]],
+        scan: ScanExecution,
+        appsec_configuration: dict[str, Any],
+        controls: dict[str, Any],
+        tools_presence: dict[str, bool],
+        record_module: Any,
+        warnings: list[str],
+        tools_skipped: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+        modules = set(appsec_configuration.get('modules') or [])
+        module_timeout = int(controls.get('module_timeout') or WEB_APPSEC_PRESETS[appsec_configuration.get('aggressiveness', 'medium')]['module_timeout'])
+        prioritized_endpoints = [row for row in endpoints if row.get('priority') in {'high', 'medium'}][: min(20, len(endpoints))]
+        suspicious_params = self._extract_suspicious_parameters(prioritized_endpoints)
+        forms_detected = [row for row in prioritized_endpoints if any(token in str(row.get('path', '')).lower() for token in ('login', 'signup', 'register', 'reset'))]
+        uploads_detected = [row for row in prioritized_endpoints if 'upload' in str(row.get('path', '')).lower()]
+        ssrf_patterns = [row for row in prioritized_endpoints if any(token in str(row.get('path', '')).lower() for token in ('url=', 'redirect', 'callback', 'proxy', 'fetch'))]
+        auth_surface = [row for row in prioritized_endpoints if any(token in str(row.get('path', '')).lower() for token in ('auth', 'login', 'token', 'session'))]
+        idor_surface = [row for row in prioritized_endpoints if any(token in str(row.get('path', '')).lower() for token in ('id=', '/users/', '/accounts/', '/orders/'))]
+
+        vulns: list[dict[str, Any]] = []
+        if 'xss' in modules and tools_presence.get('dalfox') and prioritized_endpoints:
+            dalfox_target = prioritized_endpoints[0].get('url') or target
+            dalfox = self.external_runner.run('dalfox', ['url', dalfox_target, '--silence'], timeout=module_timeout)
+            if record_module('dalfox', dalfox, required=False):
+                if dalfox.stdout:
+                    vulns.append({'name': 'Potential XSS signal (dalfox)', 'severity': 'high', 'description': 'Dalfox reportó una señal potencial de XSS.', 'matched_at': dalfox_target, 'reference': 'https://owasp.org/www-community/attacks/xss/', 'type': 'dalfox', 'owasp_category': 'A03:2021-Injection', 'confidence': 'medium'})
+        elif 'xss' in modules and not tools_presence.get('dalfox'):
+            warnings.append('Módulo XSS habilitado pero dalfox no está disponible.')
+            tools_skipped.append({'tool': 'dalfox', 'reason': 'missing_binary', 'required': False})
+
+        if 'sqli' in modules and tools_presence.get('sqlmap') and suspicious_params:
+            sqlmap_target = suspicious_params[0].get('url') or target
+            sqlmap = self.external_runner.run('sqlmap', ['-u', sqlmap_target, '--batch', '--risk=1', '--level=1'], timeout=module_timeout)
+            if record_module('sqlmap', sqlmap, required=False):
+                if 'is vulnerable' in (sqlmap.stdout or '').lower():
+                    vulns.append({'name': 'Potential SQL injection signal (sqlmap)', 'severity': 'high', 'description': 'sqlmap detectó un posible vector SQLi.', 'matched_at': sqlmap_target, 'reference': 'https://owasp.org/www-community/attacks/SQL_Injection', 'type': 'sqlmap', 'owasp_category': 'A03:2021-Injection', 'confidence': 'medium'})
+        elif 'sqli' in modules and not tools_presence.get('sqlmap'):
+            warnings.append('Módulo SQLi habilitado pero sqlmap no está disponible.')
+            tools_skipped.append({'tool': 'sqlmap', 'reason': 'missing_binary', 'required': False})
+
+        if 'misconfig' in modules and tools_presence.get('zap-baseline.py'):
+            zap = self.external_runner.run('zap-baseline.py', ['-t', target, '-m', '1'], timeout=module_timeout)
+            record_module('zap-baseline.py', zap, required=False)
+        elif 'misconfig' in modules and not tools_presence.get('zap-baseline.py'):
+            warnings.append('OWASP ZAP baseline no está disponible; se omite control adicional.')
+
+        findings_by_family = {
+            'xss': [v for v in vulns if v.get('type') == 'dalfox'],
+            'sqli': [v for v in vulns if v.get('type') == 'sqlmap'],
+            'csrf_review': self._surface_rows(forms_detected, title='CSRF review required', severity='medium', category='A01:2021-Broken Access Control'),
+            'idor_surface': self._surface_rows(idor_surface, title='IDOR/Broken Access Control surface', severity='medium', category='A01:2021-Broken Access Control'),
+            'auth_surface': self._surface_rows(auth_surface, title='Authentication attack surface', severity='medium', category='A07:2021-Identification and Authentication Failures'),
+            'upload_surface': self._surface_rows(uploads_detected, title='File upload surface', severity='medium', category='A05:2021-Security Misconfiguration'),
+            'ssrf_surface': self._surface_rows(ssrf_patterns, title='Potential SSRF surface', severity='medium', category='A10:2021-Server-Side Request Forgery'),
+        }
+        sensitive_endpoints = [row for row in prioritized_endpoints if row.get('priority') == 'high']
+        appsec = {
+            'findings_by_family': findings_by_family,
+            'suspicious_parameters': suspicious_params,
+            'forms_detected': forms_detected,
+            'uploads_detected': uploads_detected,
+            'ssrf_patterns': ssrf_patterns,
+            'auth_surface': auth_surface,
+            'idor_surface': idor_surface,
+            'owasp_categories': self._count_owasp_categories(vulns),
+        }
+        return vulns, appsec, sensitive_endpoints
+
+    def _surface_rows(self, rows: list[dict[str, Any]], *, title: str, severity: str, category: str) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for row in rows[:50]:
+            normalized.append(
+                {
+                    'name': title,
+                    'severity': severity,
+                    'description': f'Revisar superficie expuesta en {row.get("path") or row.get("url")}',
+                    'matched_at': row.get('url') or row.get('path') or '',
+                    'reference': '',
+                    'type': 'surface',
+                    'owasp_category': category,
+                    'confidence': 'low',
+                }
+            )
+        return normalized
+
+    def _extract_suspicious_parameters(self, endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        suspicious: list[dict[str, Any]] = []
+        for endpoint in endpoints:
+            endpoint_url = str(endpoint.get('url') or '')
+            if '?' not in endpoint_url:
+                continue
+            for parameter in endpoint_url.split('?', 1)[-1].split('&'):
+                key = parameter.split('=', 1)[0].strip().lower()
+                if key in {'id', 'user', 'account', 'redirect', 'url', 'next', 'return', 'callback', 'file'}:
+                    suspicious.append({'url': endpoint_url, 'parameter': key})
+        return suspicious[:100]
+
+    def _count_owasp_categories(self, vulnerabilities: list[dict[str, Any]]) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for vuln in vulnerabilities:
+            category = str(vuln.get('owasp_category') or 'Unclassified')
+            totals[category] = totals.get(category, 0) + 1
+        return totals
 
     def _resolve_web_target(self, raw_target: str) -> tuple[str, dict[str, Any]]:
         candidate_urls: list[str]
@@ -965,6 +1144,7 @@ class ScanPipelineService:
     def run_nuclei(self, target: str, templates_path: Path, *, scan_type: str = 'web_basic'):
         profile_tags = {
             'web_basic': 'misconfig,exposure',
+            'web_misconfig': 'misconfig,default-logins,exposures,ssl',
             'web_full': 'misconfig,exposure,cves',
             'web_appsec': 'xss,sqli,lfi,rce,misconfig,exposure',
             'web_api': 'api,misconfig,exposure',
