@@ -13,77 +13,69 @@
   </div>
 </div>
 
+{% if not structured_results %}
+<div class="card metric-card mb-3"><div class="card-body text-muted">Aún no hay resultados estructurados</div></div>
+{% endif %}
+
+{% if scan_category == 'web' %}
 <div class="row g-3 mb-3">
   <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Tecnologías</div><div class="metric-value">{{ web_kpis.technologies_detected|default:technologies|length }}</div></div></div></div>
   <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Endpoints</div><div class="metric-value">{{ web_kpis.endpoints_discovered|default:endpoints|length }}</div></div></div></div>
   <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Vulnerabilidades</div><div class="metric-value">{{ web_kpis.vulnerabilities_detected|default:vulnerabilities|length }}</div></div></div></div>
   <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Hallazgos web</div><div class="metric-value">{{ web_kpis.web_basic_findings|default:web_basic_findings|length }}</div></div></div></div>
   <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Controles OK</div><div class="metric-value">{{ web_kpis.controls_present|default:headers_analysis.summary.present }}</div></div></div></div>
-  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Controles ausentes</div><div class="metric-value">{{ web_kpis.controls_absent|default:headers_analysis.summary.absent }}</div></div></div></div>
-</div>
-
-<div class="card metric-card mb-3">
-  <div class="card-body">
-    <h5 class="mb-3">Resumen ejecutivo del scan</h5>
-    <div class="row g-3 small">
-      <div class="col-lg-4"><strong>Tipo:</strong> {{ object.engine_metadata.requested_scan_type|default:'nmap_discovery' }}</div>
-      <div class="col-lg-4"><strong>Pipeline:</strong> {{ object.engine_metadata.pipeline|default:'infra' }}</div>
-      <div class="col-lg-4"><strong>Duración:</strong> {{ object.duration_seconds }}s</div>
-      <div class="col-lg-4"><strong>Estado HTTP:</strong> {{ structured_results.http_status|default:'N/A' }}</div>
-      <div class="col-lg-4"><strong>CMS:</strong> {{ cms|default:'No detectado' }}</div>
-      <div class="col-lg-4"><strong>Fecha:</strong> {{ object.created_at|date:'Y-m-d H:i' }}</div>
-    </div>
-    {% if warnings %}
-      <div class="alert alert-warning mt-3 mb-0">
-        <strong>Warnings técnicos</strong>
-        <ul class="mb-0 mt-2">{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
-      </div>
-    {% endif %}
-  </div>
-</div>
-
-<div class="row g-3 mb-3">
-  <div class="col-lg-6">
-    <div class="card metric-card h-100"><div class="card-body">
-      <h6 class="mb-3">Distribución por severidad</h6>
-      {% for level,count in vulnerabilities_by_severity.items %}
-        <div class="d-flex justify-content-between small"><span>{{ level|upper }}</span><span>{{ count }}</span></div>
-        <div class="progress mb-2" role="progressbar"><div class="progress-bar" style="width:{% if vulnerabilities|length %}{% widthratio count vulnerabilities|length 100 %}{% else %}0{% endif %}%"></div></div>
-      {% empty %}<p class="text-muted small mb-0">Sin datos.</p>{% endfor %}
-    </div></div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card metric-card h-100"><div class="card-body">
-      <h6 class="mb-3">Headers OK vs Warning</h6>
-      <div class="d-flex justify-content-between small"><span>OK</span><span>{{ headers_analysis.summary.present }}</span></div>
-      <div class="progress mb-2"><div class="progress-bar bg-success" style="width:{% if interpreted_headers|length %}{% widthratio headers_analysis.summary.present interpreted_headers|length 100 %}{% else %}0{% endif %}%"></div></div>
-      <div class="d-flex justify-content-between small"><span>Warning</span><span>{{ headers_analysis.summary.absent }}</span></div>
-      <div class="progress mb-2"><div class="progress-bar bg-warning" style="width:{% if interpreted_headers|length %}{% widthratio headers_analysis.summary.absent interpreted_headers|length 100 %}{% else %}0{% endif %}%"></div></div>
-      <div class="d-flex justify-content-between small"><span>Info/Exposición</span><span>{{ headers_analysis.summary.informational }}</span></div>
-      <div class="progress"><div class="progress-bar bg-info" style="width:{% if interpreted_headers|length %}{% widthratio headers_analysis.summary.informational interpreted_headers|length 100 %}{% else %}0{% endif %}%"></div></div>
-    </div></div>
-  </div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Redirects</div><div class="metric-value">{{ web_kpis.redirects_detected|default:redirects|length }}</div></div></div></div>
 </div>
 
 <div class="card metric-card mb-3"><div class="card-body">
-  <h5 class="mb-3">Fingerprint web y tecnologías</h5>
-  <div class="row g-3">
-    <div class="col-lg-4"><div class="small text-muted">Servidor</div><div class="fw-semibold">{{ fingerprint.server|default:'n/a' }}</div></div>
-    <div class="col-lg-4"><div class="small text-muted">IP</div><div class="fw-semibold">{{ fingerprint.ip|default:'n/a' }}</div></div>
-    <div class="col-lg-4"><div class="small text-muted">País</div><div class="fw-semibold">{{ fingerprint.country|default:'n/a' }}</div></div>
+  <h5 class="mb-2">Resumen ejecutivo del scan web</h5>
+  <p class="mb-2 small">{{ structured_results.executive_summary|default:'Scan web completado con resultados parciales o completos.' }}</p>
+  <div class="row g-2 small">
+    <div class="col-lg-3"><strong>Estado HTTP:</strong> {{ structured_results.http_status|default:'N/A' }}</div>
+    <div class="col-lg-3"><strong>CMS:</strong> {{ cms|default:'No detectado' }}</div>
+    <div class="col-lg-3"><strong>Fingerprint:</strong> {% if structured_results.fingerprint_detected %}Detectado{% else %}Parcial{% endif %}</div>
+    <div class="col-lg-3"><strong>Fecha:</strong> {{ object.created_at|date:'Y-m-d H:i' }}</div>
   </div>
-  {% if technologies %}
-    <div class="mt-3 d-flex flex-wrap gap-2">{% for technology in technologies %}<span class="badge rounded-pill text-bg-light border">{{ technology }}</span>{% endfor %}</div>
-  {% endif %}
 </div></div>
 
-{% if endpoints %}
+<div class="row g-3 mb-3">
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body">
+    <h6 class="mb-3">Distribución de hallazgos por severidad</h6>
+    {% for level,count in vulnerabilities_by_severity.items %}
+      <div class="d-flex justify-content-between small"><span>{{ level|upper }}</span><span>{{ count }}</span></div>
+      <div class="progress mb-2"><div class="progress-bar" style="width:{% if vulnerabilities|length %}{% widthratio count vulnerabilities|length 100 %}{% else %}0{% endif %}%"></div></div>
+    {% empty %}<p class="small text-muted mb-0">Sin hallazgos de vulnerabilidades.</p>{% endfor %}
+  </div></div></div>
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body">
+    <h6 class="mb-3">Controles presentes vs ausentes</h6>
+    <div class="d-flex justify-content-between small"><span>Presentes</span><span>{{ headers_analysis.summary.present }}</span></div>
+    <div class="d-flex justify-content-between small"><span>Ausentes</span><span>{{ headers_analysis.summary.absent }}</span></div>
+    <div class="d-flex justify-content-between small"><span>Info/Exposición</span><span>{{ headers_analysis.summary.informational }}</span></div>
+    <hr>
+    <h6 class="mb-2">Endpoints por status code</h6>
+    {% for status,total in structured_results.endpoints_by_status.items %}
+      <div class="d-flex justify-content-between small"><span>{{ status }}</span><span>{{ total }}</span></div>
+    {% empty %}<p class="small text-muted mb-0">Sin endpoints descubiertos.</p>{% endfor %}
+  </div></div></div>
+</div>
+
 <div class="card metric-card mb-3"><div class="card-body">
-  <h5 class="mb-3">Endpoints encontrados</h5>
+  <h5 class="mb-3">Tecnologías detectadas y fingerprint web</h5>
+  <div class="row g-3 small">
+    <div class="col-lg-4"><strong>Servidor:</strong> {{ fingerprint.server|default:'n/a' }}</div>
+    <div class="col-lg-4"><strong>Redirect principal:</strong> {% if redirects %}{{ redirects.0.to|default:redirects.0 }}{% else %}N/A{% endif %}</div>
+    <div class="col-lg-4"><strong>Headers no comunes:</strong> {{ fingerprint.uncommon_headers|length }}</div>
+  </div>
+  <div class="mt-3 d-flex flex-wrap gap-2">{% for technology in technologies %}<span class="badge rounded-pill text-bg-light border">{{ technology }}</span>{% empty %}<span class="text-muted small">No se detectaron tecnologías.</span>{% endfor %}</div>
+</div></div>
+
+<div class="card metric-card mb-3"><div class="card-body">
+  <h5 class="mb-3">Endpoints descubiertos</h5>
   <div class="table-responsive">
     <table class="table table-enterprise align-middle mb-0">
-      <thead><tr><th>Ruta</th><th>Status</th><th>Redirect</th><th>Fuente</th><th>Prioridad</th><th>Longitud</th></tr></thead>
-      <tbody>{% for endpoint in endpoints %}
+      <thead><tr><th>Ruta</th><th>Status</th><th>Redirect</th><th>Fuente</th><th>Prioridad</th><th>Longitud</th><th>Observación</th></tr></thead>
+      <tbody>
+        {% for endpoint in endpoints %}
         <tr>
           <td><code>{{ endpoint.path }}</code></td>
           <td><span class="badge text-bg-light border">{{ endpoint.status_code|default:'n/a' }}</span></td>
@@ -91,35 +83,52 @@
           <td>{{ endpoint.source|default:'n/a' }}</td>
           <td><span class="badge {% if endpoint.priority == 'high' %}text-bg-danger{% elif endpoint.priority == 'medium' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">{{ endpoint.priority|default:'low'|upper }}</span></td>
           <td>{{ endpoint.length|default:'-' }}</td>
+          <td class="small text-muted">{% if endpoint.status_code == 403 %}Restringido{% elif endpoint.status_code == 401 %}Requiere auth{% elif endpoint.redirect %}Redirección{% else %}-{% endif %}</td>
         </tr>
-      {% endfor %}</tbody>
+        {% empty %}<tr><td colspan="7" class="text-muted">Sin endpoints descubiertos.</td></tr>{% endfor %}
+      </tbody>
     </table>
   </div>
 </div></div>
-{% endif %}
+{% else %}
+<div class="row g-3 mb-3">
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Puertos abiertos</div><div class="metric-value">{{ infra_kpis.open_ports }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Servicios</div><div class="metric-value">{{ infra_kpis.services_detected }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Productos</div><div class="metric-value">{{ infra_kpis.products_detected }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Versiones</div><div class="metric-value">{{ infra_kpis.versions_detected }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Findings</div><div class="metric-value">{{ infra_kpis.findings_detected }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Hosts</div><div class="metric-value">{{ summary.hosts|default:1 }}</div></div></div></div>
+</div>
 
-{% if vulnerabilities %}
 <div class="card metric-card mb-3"><div class="card-body">
-  <h5 class="mb-3">Vulnerabilidades detectadas</h5>
-  <ul class="list-group list-group-flush">{% for vuln in vulnerabilities %}
-    <li class="list-group-item px-0 d-flex justify-content-between">
-      <div><div class="fw-semibold">{{ vuln.name }}</div><div class="small text-muted">{{ vuln.description|default:'Sin descripción' }}</div></div>
-      <span class="badge {% if vuln.severity == 'critical' %}text-bg-danger{% elif vuln.severity == 'high' %}text-bg-warning{% elif vuln.severity == 'medium' %}text-bg-secondary{% else %}text-bg-info{% endif %}">{{ vuln.severity|upper }}</span>
-    </li>
-  {% endfor %}</ul>
+  <h5 class="mb-3">Resumen de exposición</h5>
+  <p class="small mb-2">Scan orientado a infraestructura con foco en puertos/protocolos, servicios, productos y versiones detectadas.</p>
+  <div class="row g-2 small">
+    <div class="col-lg-4"><strong>Puertos:</strong> {{ open_ports|join:', '|default:'N/A' }}</div>
+    <div class="col-lg-4"><strong>Top servicios:</strong> {% for service,count in top_services %}{{ service }} ({{ count }}){% if not forloop.last %}, {% endif %}{% empty %}N/A{% endfor %}</div>
+    <div class="col-lg-4"><strong>Resultado parcial:</strong> {% if summary.partial_result %}Sí{% else %}No{% endif %}</div>
+  </div>
 </div></div>
-{% endif %}
 
 <div class="row g-3">
-  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Herramientas ejecutadas/omitidas</h5>
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Puertos y protocolos</h5>
+    <ul class="list-group list-group-flush">{% for s in service_findings %}<li class="list-group-item px-0">{{ s.host }}:{{ s.port }}/{{ s.protocol }} · {{ s.service }} · {{ s.state }}</li>{% empty %}<li class="list-group-item px-0 text-muted">Sin datos.</li>{% endfor %}</ul>
+  </div></div></div>
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Versiones detectadas</h5>
+    <ul class="list-group list-group-flush">{% for v in versions_detected %}<li class="list-group-item px-0">{{ v }}</li>{% empty %}<li class="list-group-item px-0 text-muted">Sin versiones identificadas.</li>{% endfor %}</ul>
+  </div></div></div>
+</div>
+{% endif %}
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Resultados por módulo</h5>
     <div class="small mb-2"><strong>Ejecutadas:</strong> {{ executed_tools|join:', '|default:'N/A' }}</div>
     <div class="small mb-2"><strong>Disponibles:</strong> {{ available_tools|join:', '|default:'N/A' }}</div>
     {% if omitted_tools %}<div class="small"><strong>Omitidas:</strong> {% for skipped in omitted_tools %}<span class="badge text-bg-secondary">{{ skipped.tool }} · {{ skipped.reason }}</span> {% endfor %}</div>{% endif %}
+    {% if warnings %}<div class="alert alert-warning mt-3 mb-0"><strong>Warnings técnicos</strong><ul class="mb-0 mt-2">{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>{% endif %}
   </div></div></div>
-  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Evidencias (deduplicadas)</h5>
-    <ul class="list-group list-group-flush">{% for evidence in deduped_evidences %}
-      <li class="list-group-item px-0"><div class="fw-semibold">{{ evidence.source|upper }} · {{ evidence.host }}</div><div class="small text-muted">{{ evidence.created_at|date:'Y-m-d H:i' }}</div></li>
-    {% empty %}<li class="list-group-item px-0 text-muted">No hay evidencias.</li>{% endfor %}</ul>
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Evidencias técnicas</h5>
+    <ul class="list-group list-group-flush">{% for evidence in deduped_evidences %}<li class="list-group-item px-0"><div class="fw-semibold">{{ evidence.source|upper }} · {{ evidence.host }}</div><div class="small text-muted">{{ evidence.created_at|date:'Y-m-d H:i' }}</div></li>{% empty %}<li class="list-group-item px-0 text-muted">No hay evidencias.</li>{% endfor %}</ul>
   </div></div></div>
 </div>
 

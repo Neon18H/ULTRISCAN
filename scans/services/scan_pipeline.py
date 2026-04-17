@@ -219,6 +219,15 @@ class ScanPipelineService:
                     **(run_result.metadata or {}),
                 }
             },
+            'structured_results': {
+                'category': 'infra',
+                'target': scan.asset.value,
+                'hosts': len(parsed_output.hosts),
+                'services': scan.service_findings.count(),
+                'tools': {'executed': ['nmap'], 'available': ['nmap'], 'skipped': [], 'failed': []},
+                'warnings': [],
+                'partial_result': timed_out or bool(parse_metadata.get('recovered_partial_xml')),
+            },
         }
         return ScanPipelineResult(summary=summary, command_executed=run_result.command, engine_metadata=metadata)
 
@@ -298,6 +307,7 @@ class ScanPipelineService:
         interpreted_headers: list[dict[str, Any]] = []
         cms = ''
         fingerprint_detected = False
+        whatweb_signals: list[str] = []
 
         normalized_target, probe_result = self._resolve_web_target(raw_target)
         target = normalized_target
@@ -380,9 +390,11 @@ class ScanPipelineService:
             ww_payload = parse_whatweb_json(whatweb.stdout)
             plugins = self._extract_whatweb_plugins(ww_payload)
             fingerprint = self._build_whatweb_fingerprint(ww_payload, target, headers)
+            whatweb_signals = self._extract_whatweb_signals(plugins)
             if isinstance(plugins, dict):
-                technologies.update(plugins.keys())
-                fingerprint_detected = bool(plugins)
+                technologies.update(self._normalize_technology_names(plugins.keys()))
+                technologies.update(self._normalize_technology_names(whatweb_signals))
+                fingerprint_detected = bool(plugins or whatweb_signals)
                 if 'HTTPServer' in plugins:
                     headers['Server'] = self._extract_plugin_text(plugins.get('HTTPServer'))
                 if 'X-Powered-By' in plugins:
@@ -469,6 +481,7 @@ class ScanPipelineService:
                     endpoints = self._enrich_endpoint_priority(endpoints)
                     endpoints = self._dedupe_endpoints(target, endpoints)
                     endpoints_by_source = self._count_endpoints_by_source(endpoints)
+                    endpoints_by_status = self._count_endpoints_by_status(endpoints)
                     RawEvidence.objects.create(
                         organization=scan.organization,
                         scan_execution=scan,
@@ -501,6 +514,7 @@ class ScanPipelineService:
                 }
                 warnings.append(f'Se omite {enum_tool}: no se encontró wordlist para enumeración.')
                 tools_skipped.append({'tool': enum_tool, 'reason': 'missing_wordlist', 'required': False})
+                endpoints_by_status = {}
 
         interpreted_headers = self._interpret_headers(headers)
 
@@ -667,12 +681,16 @@ class ScanPipelineService:
 
         headers_analysis = self._group_interpreted_headers(interpreted_headers)
         web_basic_findings = self._build_basic_web_findings(endpoints=endpoints, headers_analysis=headers_analysis)
+        redirects = self._extract_redirects(fingerprint, endpoints)
+        endpoints_by_status = self._count_endpoints_by_status(endpoints)
+        module_status = self._build_module_status(modules)
         web_kpis = self._build_web_kpis(
             technologies=technologies,
             endpoints=endpoints,
             vulnerabilities=vulnerabilities,
             headers_analysis=headers_analysis,
             web_basic_findings=web_basic_findings,
+            redirects=redirects,
         )
 
         summary = {
@@ -704,10 +722,23 @@ class ScanPipelineService:
         }
         http_status = probe_result.get('status_code')
         redirections = fingerprint.get('redirections') or []
+        if not redirections:
+            redirections = redirects
+        executive_summary = self._build_web_executive_summary(
+            target=target,
+            http_status=http_status,
+            technologies=technologies,
+            endpoints=endpoints,
+            vulnerabilities=vulnerabilities,
+            warnings=warnings,
+            cms=cms,
+            redirects=redirections,
+        )
         metadata = {
             'pipeline': 'web',
             'modules': modules,
             'structured_results': {
+                'category': 'web',
                 'target': target,
                 'target_url': target,
                 'http_status': http_status,
@@ -724,6 +755,7 @@ class ScanPipelineService:
                 'cms': cms,
                 'fingerprint': fingerprint,
                 'tools': tools_map,
+                'module_status': module_status,
                 'tools_available': tools_available,
                 'tools_executed': tools_executed,
                 'tools_failed': tools_failed,
@@ -735,6 +767,9 @@ class ScanPipelineService:
                 'headers_analysis': headers_analysis,
                 'vulnerabilities_by_severity': vulnerabilities_by_severity,
                 'endpoints_by_source': endpoints_by_source,
+                'endpoints_by_status': endpoints_by_status,
+                'whatweb_signals': whatweb_signals,
+                'executive_summary': executive_summary,
             },
         }
         command_executed = '; '.join(
@@ -821,8 +856,10 @@ class ScanPipelineService:
                 '-k',
                 '-q',
                 '-r',
-                '-s',
+                '--status-codes',
                 '200,204,301,302,307,308,401,403',
+                '--status-codes-blacklist',
+                '',
             ],
         )
 
@@ -850,20 +887,24 @@ class ScanPipelineService:
                 '-silent',
                 '-no-color',
                 '-c',
-                os.environ.get('NUCLEI_CONCURRENCY', '2'),
+                os.environ.get('NUCLEI_CONCURRENCY', '1'),
                 '-rl',
-                os.environ.get('NUCLEI_RATE_LIMIT', '8'),
+                os.environ.get('NUCLEI_RATE_LIMIT', '3'),
                 '-bs',
-                os.environ.get('NUCLEI_BULK_SIZE', '10'),
+                os.environ.get('NUCLEI_BULK_SIZE', '4'),
                 '-timeout',
-                os.environ.get('NUCLEI_TIMEOUT', '8'),
+                os.environ.get('NUCLEI_TIMEOUT', '6'),
                 '-retries',
                 os.environ.get('NUCLEI_RETRIES', '0'),
                 '-max-host-error',
-                os.environ.get('NUCLEI_MAX_HOST_ERRORS', '5'),
+                os.environ.get('NUCLEI_MAX_HOST_ERRORS', '2'),
+                '-headless-bulk-size',
+                os.environ.get('NUCLEI_HEADLESS_BULK_SIZE', '1'),
+                '-project',
                 '-t',
                 str(templates_path),
             ],
+            timeout=int(os.environ.get('NUCLEI_TOOL_TIMEOUT', '180')),
         )
 
     def _resolve_wordlist(self) -> tuple[str | None, str]:
@@ -1084,6 +1125,14 @@ class ScanPipelineService:
             totals[source] = totals.get(source, 0) + 1
         return totals
 
+    def _count_endpoints_by_status(self, endpoints: list[dict[str, Any]]) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for endpoint in endpoints:
+            status = endpoint.get('status_code')
+            key = str(status) if status is not None else 'unknown'
+            totals[key] = totals.get(key, 0) + 1
+        return dict(sorted(totals.items(), key=lambda row: row[0]))
+
     def _count_vulnerabilities_by_severity(self, vulnerabilities: list[dict[str, Any]]) -> dict[str, int]:
         totals = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
         for vuln in vulnerabilities:
@@ -1115,6 +1164,105 @@ class ScanPipelineService:
             enriched.append({**endpoint, 'priority': self._endpoint_priority(path, status_code)})
         return enriched
 
+    def _normalize_technology_names(self, raw_items: Any) -> set[str]:
+        if not raw_items:
+            return set()
+        normalized: set[str] = set()
+        alias_map = {
+            'httpserver': 'HTTP Server',
+            'x-powered-by': 'X-Powered-By',
+            'jquery': 'jQuery',
+            'bootstrap': 'Bootstrap',
+            'nginx': 'Nginx',
+            'apache': 'Apache HTTP Server',
+            'php': 'PHP',
+        }
+        for item in raw_items:
+            text = str(item or '').strip()
+            if not text:
+                continue
+            canonical = alias_map.get(text.lower(), text)
+            normalized.add(canonical)
+        return normalized
+
+    def _extract_whatweb_signals(self, plugins: dict[str, Any]) -> list[str]:
+        signals: list[str] = []
+        if not isinstance(plugins, dict):
+            return signals
+        for plugin_name, plugin_value in plugins.items():
+            signals.append(str(plugin_name))
+            extracted = self._extract_plugin_text(plugin_value)
+            for token in re.split(r'[,/;| ]+', extracted):
+                token = token.strip()
+                if len(token) < 3:
+                    continue
+                if re.match(r'^\d+(\.\d+)+$', token):
+                    continue
+                signals.append(token)
+        return signals
+
+    def _extract_redirects(self, fingerprint: dict[str, Any], endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        redirects: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        raw_redirects = fingerprint.get('redirections') or []
+        if isinstance(raw_redirects, list):
+            for item in raw_redirects:
+                if isinstance(item, dict):
+                    src = str(item.get('from') or item.get('request') or '')
+                    dst = str(item.get('to') or item.get('location') or item.get('url') or '')
+                else:
+                    src = ''
+                    dst = str(item)
+                key = (src, dst)
+                if dst and key not in seen:
+                    seen.add(key)
+                    redirects.append({'from': src, 'to': dst, 'source': 'whatweb'})
+        for endpoint in endpoints:
+            status_code = endpoint.get('status_code')
+            location = str(endpoint.get('redirect') or '')
+            if status_code in {301, 302, 307, 308} and location:
+                key = (str(endpoint.get('path') or ''), location)
+                if key in seen:
+                    continue
+                seen.add(key)
+                redirects.append(
+                    {
+                        'from': endpoint.get('path') or '',
+                        'to': location,
+                        'source': endpoint.get('source') or 'enumeration',
+                    }
+                )
+        return redirects
+
+    def _build_module_status(self, modules: dict[str, Any]) -> dict[str, int]:
+        totals = {'ok': 0, 'failed': 0, 'warning': 0, 'skipped': 0}
+        for module_data in modules.values():
+            if not isinstance(module_data, dict):
+                continue
+            state = str(module_data.get('state') or '').lower()
+            if state in totals:
+                totals[state] += 1
+        return totals
+
+    def _build_web_executive_summary(
+        self,
+        *,
+        target: str,
+        http_status: Any,
+        technologies: set[str],
+        endpoints: list[dict[str, Any]],
+        vulnerabilities: list[dict[str, Any]],
+        warnings: list[str],
+        cms: str,
+        redirects: list[dict[str, Any]],
+    ) -> str:
+        return (
+            f"Objetivo {target} respondió con HTTP {http_status or 'N/A'}. "
+            f"Se detectaron {len(technologies)} tecnologías, {len(endpoints)} endpoints, "
+            f"{len(redirects)} redirecciones y {len(vulnerabilities)} vulnerabilidades. "
+            f"CMS: {cms or 'no detectado'}. Warnings técnicos: {len(warnings)}."
+        )
+
     def _build_web_kpis(
         self,
         *,
@@ -1123,6 +1271,7 @@ class ScanPipelineService:
         vulnerabilities: list[dict[str, Any]],
         headers_analysis: dict[str, Any],
         web_basic_findings: list[dict[str, Any]],
+        redirects: list[dict[str, Any]],
     ) -> dict[str, Any]:
         vulnerabilities_by_severity = self._count_vulnerabilities_by_severity(vulnerabilities)
         return {
@@ -1132,27 +1281,26 @@ class ScanPipelineService:
             'web_basic_findings': len(web_basic_findings),
             'controls_present': len(headers_analysis.get('present') or []),
             'controls_absent': len(headers_analysis.get('absent') or []),
+            'redirects_detected': len(redirects),
             'severity_aggregate': vulnerabilities_by_severity,
         }
 
     def _build_basic_web_findings(self, *, endpoints: list[dict[str, Any]], headers_analysis: dict[str, Any]) -> list[dict[str, Any]]:
         findings: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
         for endpoint in endpoints[:15]:
             status = endpoint.get('status_code')
             if status in {200, 401, 403}:
-                findings.append(
-                    {
-                        'title': 'Endpoint sensible descubierto',
-                        'severity': 'low',
-                        'evidence': f"{endpoint.get('path')} ({status})",
-                    }
-                )
+                key = ('endpoint', str(endpoint.get('path')))
+                if key in seen:
+                    continue
+                seen.add(key)
+                findings.append({'title': 'Endpoint sensible descubierto', 'severity': 'low', 'evidence': f"{endpoint.get('path')} ({status})"})
         for header in headers_analysis.get('absent', [])[:4]:
-            findings.append(
-                {
-                    'title': f"Header faltante: {header.get('header')}",
-                    'severity': 'medium',
-                    'evidence': header.get('message'),
-                }
-            )
+            header_name = str(header.get('header') or '')
+            key = ('header_absent', header_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append({'title': f"Header faltante: {header_name}", 'severity': 'medium', 'evidence': header.get('message')})
         return findings
