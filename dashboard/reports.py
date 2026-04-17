@@ -218,53 +218,114 @@ def build_scan_report_pdf(*, scan, generated_by):
     findings = list(scan.findings.all().order_by('-severity', '-created_at')[:150])
 
     pdf = SimpleEnterprisePDF(f'Scan Report #{scan.id}')
-    pdf.add_heading('UltriScan', level=1)
-    pdf.add_paragraph('Enterprise Cyber Exposure Report', size=11)
-    pdf.add_spacer(8)
-    pdf.add_kv('Tipo de scan', structured.get('scan_type') or summary.get('scan_type') or 'n/a')
-    pdf.add_kv('Objetivo', structured.get('target') or scan.asset.value)
-    pdf.add_kv('Estado', scan.get_status_display())
-    pdf.add_kv('Fecha', scan.created_at.strftime('%Y-%m-%d %H:%M UTC'))
-    pdf.add_kv('Analista', generated_by.get_full_name() or generated_by.email)
+    scan_type = structured.get('scan_type') or summary.get('scan_type') or 'n/a'
+    target = structured.get('target') or scan.asset.value
+    technologies = structured.get('technologies') or []
+    endpoints = structured.get('endpoints') or []
+    vulns = structured.get('vulnerabilities') or []
+    interpreted_headers = structured.get('interpreted_headers') or []
 
-    pdf.add_spacer(14)
+    severity_totals = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
+    for vuln in vulns:
+        sev = (vuln.get('severity') or 'medium').lower()
+        if sev not in severity_totals:
+            sev = 'info'
+        severity_totals[sev] += 1
+    risk_level = 'LOW'
+    if severity_totals['critical'] > 0:
+        risk_level = 'CRITICAL'
+    elif severity_totals['high'] > 0:
+        risk_level = 'HIGH'
+    elif severity_totals['medium'] > 0:
+        risk_level = 'MEDIUM'
+
+    # 1. Cover
+    pdf.add_heading('UltriScan', level=1)
+    pdf.add_paragraph('Enterprise Vulnerability Assessment Report', size=11)
+    pdf.add_spacer(8)
+    pdf.add_kv('Tipo de scan', scan_type)
+    pdf.add_kv('Objetivo', target)
+    pdf.add_kv('Organización', scan.organization.name)
+    pdf.add_kv('Fecha', scan.created_at.strftime('%Y-%m-%d %H:%M UTC'))
+    pdf.add_kv('Generado por', generated_by.get_full_name() or generated_by.email)
+    pdf.add_kv('Nivel de riesgo observado', risk_level)
+
+    # 2. TOC
+    pdf._new_page()
+    pdf.add_heading('Tabla de contenido', level=2)
+    for section in [
+        '1. Portada',
+        '2. Tabla de contenido',
+        '3. Resumen ejecutivo',
+        '4. Metodología',
+        '5. Resultados técnicos',
+        '6. Hallazgos detallados',
+        '7. Recomendaciones',
+        '8. Metadata técnica',
+    ]:
+        pdf.add_paragraph(section, width=95)
+
+    # 3. Executive summary
+    pdf._new_page()
     pdf.add_heading('Resumen ejecutivo', level=2)
     pdf.add_paragraph(
-        'Este reporte resume el estado de exposición del objetivo escaneado, incluyendo evidencias técnicas, '
-        'hallazgos priorizados y recomendaciones accionables.'
+        'Se evaluó la superficie de exposición del objetivo para identificar riesgos técnicos, '
+        'rutas sensibles y vulnerabilidades con impacto potencial en confidencialidad, integridad y disponibilidad.'
     )
-    pdf.add_kv('Findings', len(findings))
-    pdf.add_kv('Tecnologías detectadas', len(structured.get('technologies') or []))
-    pdf.add_kv('Endpoints descubiertos', len(structured.get('endpoints') or []))
-    pdf.add_kv('Vulnerabilidades detectadas', len(structured.get('vulnerabilities') or []))
-
-    pdf.add_spacer(10)
-    pdf.add_heading('Herramientas ejecutadas', level=2)
-    pdf.add_paragraph(f"Ejecutadas: {', '.join(tools.get('executed') or []) or 'Sin ejecuciones exitosas'}")
+    pdf.add_kv('Resultado general', scan.get_status_display())
+    pdf.add_kv('Findings correlacionados', len(findings))
+    pdf.add_kv('Tecnologías detectadas', len(technologies))
+    pdf.add_kv('Endpoints descubiertos', len(endpoints))
+    pdf.add_kv('Vulnerabilidades detectadas', len(vulns))
+    pdf.add_kv('Controles de seguridad evaluados', len(interpreted_headers))
     pdf.add_paragraph(
-        f"Omitidas/Fallidas: {len(tools.get('skipped') or []) + len(tools.get('failed') or [])} | "
-        f"Warnings: {len(structured.get('warnings') or [])}"
+        f"Resumen de severidad: Critical={severity_totals['critical']}, High={severity_totals['high']}, "
+        f"Medium={severity_totals['medium']}, Low={severity_totals['low']}, Info={severity_totals['info']}."
     )
 
-    technologies = structured.get('technologies') or []
+    # 4. Methodology
+    pdf.add_spacer(12)
+    pdf.add_heading('Metodología', level=2)
+    pdf.add_paragraph('Herramientas utilizadas: WhatWeb, Gobuster/FFUF, Nuclei, Nikto, WPScan (según disponibilidad).')
+    pdf.add_paragraph('Proceso aplicado: fingerprinting, enumeración de endpoints, evaluación de vulnerabilidades, correlación de findings.')
+    pdf.add_paragraph(f"Alcance del scan: {scan_type} sobre {target}.")
+    if structured.get('partial_result') or summary.get('partial_result'):
+        pdf.add_paragraph('Limitaciones detectadas: ejecución parcial por dependencias faltantes, timeouts o límites del worker.')
+    if structured.get('warnings'):
+        pdf.add_paragraph(f"Warnings relevantes: {' | '.join(structured.get('warnings')[:6])}", width=100)
+
+    # 5. Technical results
+    pdf._new_page()
+    pdf.add_heading('Resultados técnicos', level=2)
+    fingerprint = structured.get('fingerprint') or {}
+    pdf.add_kv('HTTP status objetivo', structured.get('http_status') or 'n/a')
+    pdf.add_kv('Servidor detectado', fingerprint.get('server') or 'n/a')
+    pdf.add_kv('IP detectada', fingerprint.get('ip') or 'n/a')
+    pdf.add_kv('País detectado', fingerprint.get('country') or 'n/a')
     if technologies:
         pdf.add_spacer(10)
         pdf.add_heading('Tecnologías detectadas', level=2)
         pdf.add_paragraph(', '.join(technologies[:40]), width=104)
-
-    endpoints = structured.get('endpoints') or []
     pdf.add_spacer(10)
     pdf.add_heading('Endpoints encontrados', level=2)
     if endpoints:
         for endpoint in endpoints[:60]:
             pdf.add_paragraph(
-                f"- {endpoint.get('path') or endpoint.get('url')} | Status: {endpoint.get('status_code', 'n/a')} | Source: {endpoint.get('source', 'n/a')}",
+                f"- {endpoint.get('path') or endpoint.get('url')} | Status: {endpoint.get('status_code', 'n/a')} | "
+                f"Redirect: {endpoint.get('redirect') or '-'} | Source: {endpoint.get('source', 'n/a')} | "
+                f"Prioridad: {(endpoint.get('priority') or 'low').upper()}",
                 width=104,
             )
     else:
         pdf.add_paragraph('No se identificaron endpoints relevantes.')
 
-    interpreted_headers = structured.get('interpreted_headers') or []
+    redirects = structured.get('redirects') or []
+    if redirects:
+        pdf.add_spacer(10)
+        pdf.add_heading('Redirecciones detectadas', level=2)
+        for redirect in redirects[:20]:
+            pdf.add_paragraph(f'- {redirect}', width=102)
+
     pdf.add_spacer(10)
     pdf.add_heading('Headers y observaciones de seguridad', level=2)
     if interpreted_headers:
@@ -276,7 +337,6 @@ def build_scan_report_pdf(*, scan, generated_by):
     else:
         pdf.add_paragraph('Sin observaciones de headers.')
 
-    vulns = structured.get('vulnerabilities') or []
     pdf.add_spacer(10)
     pdf.add_heading('Vulnerabilidades detectadas', level=2)
     if vulns:
@@ -289,7 +349,8 @@ def build_scan_report_pdf(*, scan, generated_by):
     else:
         pdf.add_paragraph('No se detectaron vulnerabilidades en el alcance evaluado.')
 
-    pdf.add_spacer(10)
+    # 6. Findings
+    pdf._new_page()
     pdf.add_heading('Findings priorizados', level=2)
     if findings:
         for finding in findings[:80]:
@@ -302,18 +363,23 @@ def build_scan_report_pdf(*, scan, generated_by):
     else:
         pdf.add_paragraph('No existen findings correlacionados para este scan.')
 
+    # 7. Recommendations
     pdf.add_spacer(10)
     pdf.add_heading('Recomendaciones', level=2)
     pdf.add_paragraph('1) Priorizar la remediación de severidades Critical/High en menos de 7 días.')
     pdf.add_paragraph('2) Aplicar hardening de headers y reducir exposición de endpoints administrativos.')
-    pdf.add_paragraph('3) Repetir escaneo tras remediación para validar cierre técnico.')
+    pdf.add_paragraph('3) Reducir exposición tecnológica: ocultar banners Server y X-Powered-By cuando aplique.')
+    pdf.add_paragraph('4) Repetir escaneo tras remediación para validar cierre técnico.')
 
+    # 8. Technical metadata
     pdf.add_spacer(10)
     pdf.add_heading('Metadata técnica', level=2)
     pdf.add_kv('Scan ID', scan.id)
-    pdf.add_kv('Comando(s)', (scan.command_executed or 'n/a')[:180])
+    pdf.add_kv('Comando(s)', (scan.command_executed or 'n/a')[:220])
     pdf.add_kv('Worker status', scan.get_status_display())
     pdf.add_kv('Duración (s)', scan.duration_seconds or 0)
+    pdf.add_kv('Módulos ejecutados', ', '.join(tools.get('executed') or []) or 'N/A')
+    pdf.add_kv('Módulos omitidos', ', '.join([row.get('tool', '') for row in tools.get('skipped') or []]) or 'N/A')
 
     filename = f"ultriscan_scan_{scan.id}_{timestamp.strftime('%Y%m%d_%H%M')}.pdf"
     response = HttpResponse(pdf.render(), content_type='application/pdf')
