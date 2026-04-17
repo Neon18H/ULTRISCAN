@@ -160,6 +160,18 @@ class Command(BaseCommand):
             return json.load(f)
 
     def _scan_profile_defaults(self, name, description):
+        preset = 'medium'
+        if name in {'web_basic', 'wordpress'}:
+            preset = 'low'
+        elif name == 'web_appsec':
+            preset = 'medium'
+        elif name in {'web_misconfig', 'misconfiguration'}:
+            preset = 'low'
+        web_presets = {
+            'low': {'rate_limit': 2, 'concurrency': 1, 'max_depth': 2, 'max_endpoints': 120, 'module_timeout': 120},
+            'medium': {'rate_limit': 4, 'concurrency': 2, 'max_depth': 3, 'max_endpoints': 320, 'module_timeout': 180},
+            'high': {'rate_limit': 8, 'concurrency': 3, 'max_depth': 4, 'max_endpoints': 700, 'module_timeout': 300},
+        }
         return {
             'description': description,
             'host_discovery': True,
@@ -168,4 +180,6 @@ class Command(BaseCommand):
             'web_detection': name in {'web_basic', 'web_misconfig', 'web_appsec', 'wordpress', 'misconfiguration'},
             'light_enumeration': name in {'infra_standard', 'full_tcp_safe', 'misconfiguration', 'infra_services'},
             'wordpress_scan': name == 'wordpress',
+            'web_scan_preset': preset,
+            'web_scan_defaults': web_presets[preset],
         }

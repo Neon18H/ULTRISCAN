@@ -126,9 +126,9 @@
               <button class="btn btn-sm btn-outline-secondary" type="button" data-appsec-action="clear-all"><i class="bi bi-eraser me-1"></i>Limpiar</button>
             </div>
             <div class="d-flex flex-wrap gap-2">
-              <button class="btn btn-sm btn-primary" type="button" data-appsec-preset="quick"><i class="bi bi-lightning-charge me-1"></i>Quick Scan</button>
-              <button class="btn btn-sm btn-dark" type="button" data-appsec-preset="full"><i class="bi bi-bullseye me-1"></i>Full AppSec</button>
-              <button class="btn btn-sm btn-outline-dark" type="button" data-appsec-preset="stealth"><i class="bi bi-moon-stars me-1"></i>Stealth</button>
+              <button class="btn btn-sm btn-outline-success" type="button" data-operational-preset="low"><i class="bi bi-shield-check me-1"></i>LOW</button>
+              <button class="btn btn-sm btn-primary" type="button" data-operational-preset="medium"><i class="bi bi-speedometer2 me-1"></i>MEDIUM</button>
+              <button class="btn btn-sm btn-outline-danger" type="button" data-operational-preset="high"><i class="bi bi-lightning-charge me-1"></i>HIGH</button>
             </div>
           </div>
           {% for category in web_appsec_module_groups %}
@@ -194,11 +194,18 @@
       });
     };
 
-    const presets = {
+    const modulePresets = {
       quick: ['xss', 'sqli', 'csrf', 'misconfig'],
       full: [{% for module in web_appsec_all_modules %}'{{ module }}'{% if not forloop.last %}, {% endif %}{% endfor %}],
       stealth: ['endpoint_discovery', 'misconfig', 'csrf'],
     };
+    const operationalPresets = {{ web_scan_presets|safe }};
+    const aggressivenessField = document.getElementById('id_web_appsec_aggressiveness');
+    const rateField = document.getElementById('id_web_rate_limit');
+    const concurrencyField = document.getElementById('id_web_concurrency');
+    const depthField = document.getElementById('id_web_max_depth');
+    const endpointsField = document.getElementById('id_web_max_endpoints');
+    const timeoutField = document.getElementById('id_web_module_timeout');
 
     document.querySelectorAll('[data-appsec-action="select-all"]').forEach((button) => {
       button.addEventListener('click', () => updateState(checkboxes.map((checkbox) => checkbox.value)));
@@ -209,7 +216,20 @@
     document.querySelectorAll('[data-appsec-preset]').forEach((button) => {
       button.addEventListener('click', () => {
         const preset = button.getAttribute('data-appsec-preset');
-        updateState(presets[preset] || []);
+        updateState(modulePresets[preset] || []);
+      });
+    });
+    document.querySelectorAll('[data-operational-preset]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const preset = button.getAttribute('data-operational-preset');
+        const values = operationalPresets[preset];
+        if (!values) return;
+        if (aggressivenessField) aggressivenessField.value = preset;
+        if (rateField) rateField.value = values.rate_limit;
+        if (concurrencyField) concurrencyField.value = values.concurrency;
+        if (depthField) depthField.value = values.max_depth;
+        if (endpointsField) endpointsField.value = values.max_endpoints;
+        if (timeoutField) timeoutField.value = values.module_timeout;
       });
     });
   })();

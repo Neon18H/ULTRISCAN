@@ -73,6 +73,18 @@
 </div>
 {% endif %}
 
+<div class="card metric-card mb-3"><div class="card-body">
+  <h5 class="mb-3">Configuración operativa del scan</h5>
+  <div class="row g-3 small">
+    <div class="col-lg-2"><strong>Preset:</strong> {{ structured_results.scan_preset|default:structured_results.aggressiveness|default:'medium'|upper }}</div>
+    <div class="col-lg-2"><strong>Rate limit:</strong> {{ structured_results.scan_controls.rate_limit|default:'n/a' }} req/s</div>
+    <div class="col-lg-2"><strong>Concurrencia:</strong> {{ structured_results.scan_controls.concurrency|default:'n/a' }}</div>
+    <div class="col-lg-2"><strong>Profundidad:</strong> {{ structured_results.scan_controls.max_depth|default:'n/a' }}</div>
+    <div class="col-lg-2"><strong>Max endpoints:</strong> {{ structured_results.scan_controls.max_endpoints|default:'n/a' }}</div>
+    <div class="col-lg-2"><strong>Timeout módulo:</strong> {{ structured_results.scan_controls.module_timeout|default:'n/a' }}s</div>
+  </div>
+</div></div>
+
 <div class="row g-3 mb-3">
   <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body">
     <h6 class="mb-3">Distribución de hallazgos por severidad</h6>
