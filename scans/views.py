@@ -3,9 +3,11 @@ import logging
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
+from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import redirect
 from django.urls import reverse
+from django.utils import timezone
 from django.views.generic import DetailView, ListView, TemplateView, View
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -51,9 +53,28 @@ class ScanExecutionViewSet(TenantModelViewSetMixin, viewsets.ModelViewSet):
     def launch(self, request, pk=None):
         scan = self.get_object()
         scan.status = ScanExecution.Status.QUEUED
-        scan.save(update_fields=['status', 'updated_at'])
+        scan.progress_percent = 0
+        scan.progress_stage = 'queued'
+        scan.status_message = 'Escaneo encolado'
+        scan.save(update_fields=['status', 'progress_percent', 'progress_stage', 'status_message', 'updated_at'])
         run_scan_task.delay(scan.id)
         return Response({'detail': 'Escaneo encolado'}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['post'])
+    def archive(self, request, pk=None):
+        scan = self.get_object()
+        scan.is_archived = True
+        scan.archived_at = timezone.now()
+        scan.save(update_fields=['is_archived', 'archived_at', 'updated_at'])
+        return Response({'detail': f'Escaneo #{scan.id} archivado'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def unarchive(self, request, pk=None):
+        scan = self.get_object()
+        scan.is_archived = False
+        scan.archived_at = None
+        scan.save(update_fields=['is_archived', 'archived_at', 'updated_at'])
+        return Response({'detail': f'Escaneo #{scan.id} reactivado'}, status=status.HTTP_200_OK)
 
 
 class ScanCreateView(LoginRequiredMixin, TemplateView):
@@ -150,6 +171,9 @@ class ScanCreateView(LoginRequiredMixin, TemplateView):
             profile=profile,
             launched_by=request.user,
             status=ScanExecution.Status.QUEUED,
+            progress_percent=0,
+            progress_stage='queued',
+            status_message='Escaneo en cola',
             engine_metadata={
                 'requested_scan_type': scan_type,
                 'requested_module': form.cleaned_data['module'],
@@ -168,12 +192,94 @@ class ScanListView(LoginRequiredMixin, TenantQuerysetMixin, ListView):
     paginate_by = 25
 
     def get_queryset(self):
-        return (
-            super()
-            .get_queryset()
-            .select_related('asset', 'profile')
-            .order_by('-created_at')
+        queryset = super().get_queryset().select_related('asset', 'profile', 'organization')
+
+        scan_id = (self.request.GET.get('scan_id') or '').strip()
+        asset = (self.request.GET.get('asset') or '').strip()
+        scan_type = (self.request.GET.get('scan_type') or '').strip()
+        profile = (self.request.GET.get('profile') or '').strip()
+        status_value = (self.request.GET.get('status') or '').strip()
+        archived = (self.request.GET.get('archived') or 'active').strip()
+        date_from = (self.request.GET.get('date_from') or '').strip()
+        date_to = (self.request.GET.get('date_to') or '').strip()
+        organization = (self.request.GET.get('organization') or '').strip()
+        ordering = (self.request.GET.get('ordering') or '-created_at').strip()
+
+        if scan_id:
+            queryset = queryset.filter(id=scan_id) if scan_id.isdigit() else queryset.none()
+        if asset:
+            queryset = queryset.filter(Q(asset__name__icontains=asset) | Q(asset__value__icontains=asset))
+        if scan_type:
+            queryset = queryset.filter(engine_metadata__requested_scan_type=scan_type)
+        if profile:
+            queryset = queryset.filter(profile__name=profile)
+        if status_value:
+            queryset = queryset.filter(status=status_value)
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+        if organization:
+            queryset = queryset.filter(organization__name=organization)
+        if archived == 'active':
+            queryset = queryset.filter(is_archived=False)
+        elif archived == 'archived':
+            queryset = queryset.filter(is_archived=True)
+
+        ordering_map = {
+            'date_desc': '-created_at',
+            'date_asc': 'created_at',
+            'status_asc': 'status',
+            'status_desc': '-status',
+            'duration_desc': '-duration_seconds',
+            'duration_asc': 'duration_seconds',
+            '-created_at': '-created_at',
+            'created_at': 'created_at',
+        }
+        return queryset.order_by(ordering_map.get(ordering, '-created_at'))
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        base_queryset = super().get_queryset().select_related('profile', 'organization')
+        context['status_choices'] = ScanExecution.Status.choices
+        context['profiles'] = base_queryset.values_list('profile__name', flat=True).distinct().order_by('profile__name')
+        context['scan_types'] = sorted(
+            {
+                (row or 'nmap_discovery')
+                for row in base_queryset.values_list('engine_metadata__requested_scan_type', flat=True)
+            }
         )
+        context['organizations'] = base_queryset.values_list('organization__name', flat=True).distinct().order_by('organization__name')
+        context['archive_choices'] = (
+            ('active', 'Activos'),
+            ('archived', 'Archivados'),
+            ('all', 'Todos'),
+        )
+        context['current_ordering'] = (self.request.GET.get('ordering') or 'date_desc').strip()
+        return context
+
+
+class ScanArchiveToggleView(LoginRequiredMixin, TenantQuerysetMixin, View):
+    archive = True
+
+    def post(self, request, *args, **kwargs):
+        scan = self.get_queryset().filter(pk=kwargs.get('pk')).first()
+        if not scan:
+            raise Http404('Scan no encontrado')
+        scan.is_archived = self.archive
+        scan.archived_at = timezone.now() if self.archive else None
+        scan.save(update_fields=['is_archived', 'archived_at', 'updated_at'])
+        action = 'archivado' if self.archive else 'restaurado'
+        messages.success(request, f'Scan #{scan.id} {action} correctamente.')
+        return redirect(f"{reverse('scans-list')}?{request.GET.urlencode()}") if request.GET else redirect('scans-list')
+
+
+class ScanArchiveView(ScanArchiveToggleView):
+    archive = True
+
+
+class ScanUnarchiveView(ScanArchiveToggleView):
+    archive = False
 
 
 class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):

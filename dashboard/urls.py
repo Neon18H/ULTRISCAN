@@ -1,6 +1,13 @@
 from django.urls import path
 
-from scans.views import ScanCreateView, ScanDetailView, ScanListView, ScanReportPdfView
+from scans.views import (
+    ScanArchiveView,
+    ScanCreateView,
+    ScanDetailView,
+    ScanListView,
+    ScanReportPdfView,
+    ScanUnarchiveView,
+)
 
 from .views import (
     AssetCreateView,
@@ -30,6 +37,8 @@ urlpatterns = [
     path('scans/create/', ScanCreateView.as_view(), name='scans-create-legacy'),
     path('scans/', ScanListView.as_view(), name='scans-list'),
     path('scans/<int:pk>/', ScanDetailView.as_view(), name='scans-detail'),
+    path('scans/<int:pk>/archive/', ScanArchiveView.as_view(), name='scans-archive'),
+    path('scans/<int:pk>/unarchive/', ScanUnarchiveView.as_view(), name='scans-unarchive'),
     path('scans/<int:pk>/report.pdf', ScanReportPdfView.as_view(), name='scans-report-pdf'),
     path('findings/', FindingListView.as_view(), name='findings-list'),
     path('findings/export/technical-pdf/', FindingsTechnicalPdfView.as_view(), name='findings-export-technical-pdf'),
