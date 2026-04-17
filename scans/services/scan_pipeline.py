@@ -244,6 +244,7 @@ class ScanPipelineService:
         tools_skipped: list[dict[str, Any]] = []
         warnings: list[str] = []
         dependency_checks: dict[str, Any] = {}
+        tools_available: list[str] = []
         technologies: set[str] = set()
         endpoints: list[dict[str, Any]] = []
         vulnerabilities: list[dict[str, Any]] = []
@@ -271,6 +272,7 @@ class ScanPipelineService:
             'nikto': {'available': tool_presence['nikto'], 'required': False},
             'wpscan': {'available': tool_presence['wpscan'], 'required': scan_type in {'web_wordpress', 'wordpress_scan'}},
         }
+        tools_available = sorted([tool for tool, is_available in tool_presence.items() if is_available])
 
         if not dependency_checks['nikto']['available']:
             warnings.append('Nikto no disponible: se omite escaneo nikto (opcional).')
@@ -316,36 +318,43 @@ class ScanPipelineService:
         preferred_enum_tool = 'ffuf' if scan_type in {'web_api', 'web_full'} else 'gobuster'
         fallback_enum_tool = 'gobuster' if preferred_enum_tool == 'ffuf' else 'ffuf'
         enum_tool = preferred_enum_tool
+        skip_enumeration = False
         if not tool_presence.get(preferred_enum_tool) and tool_presence.get(fallback_enum_tool):
             enum_tool = fallback_enum_tool
             warnings.append(
                 f'{preferred_enum_tool} no disponible; se usa {fallback_enum_tool} como fallback para enumeración web.'
             )
+        elif not tool_presence.get(preferred_enum_tool) and not tool_presence.get(fallback_enum_tool):
+            warnings.append('No hay herramienta de enumeración disponible (ffuf/gobuster); se omite esa fase.')
+            tools_skipped.append({'tool': preferred_enum_tool, 'reason': 'missing_binary', 'required': False})
+            tools_skipped.append({'tool': fallback_enum_tool, 'reason': 'missing_binary', 'required': False})
+            skip_enumeration = True
         enum_args = (
             ['-u', f'{target}/FUZZ', '-w', '/usr/share/wordlists/dirb/common.txt', '-json']
             if enum_tool == 'ffuf'
             else ['dir', '-u', target, '-w', '/usr/share/wordlists/dirb/common.txt', '-o', '/dev/stdout', '--format', 'json']
         )
-        enum_res = self.external_runner.run(enum_tool, enum_args)
-        if _record_module(enum_tool, enum_res):
-            if enum_tool == 'ffuf':
-                for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
-                    try:
-                        obj = json.loads(row)
-                        endpoints.append({'path': obj.get('url', ''), 'status_code': obj.get('status')})
-                    except json.JSONDecodeError:
-                        continue
-            else:
-                endpoints = parse_gobuster_json(enum_res.stdout)
-            RawEvidence.objects.create(
-                organization=scan.organization,
-                scan_execution=scan,
-                source=enum_tool,
-                host=target,
-                payload={'endpoints': endpoints},
-                raw_output=enum_res.stdout,
-                metadata={'stderr': enum_res.stderr, 'command': enum_res.command, 'scan_type': scan_type},
-            )
+        if not skip_enumeration:
+            enum_res = self.external_runner.run(enum_tool, enum_args)
+            if _record_module(enum_tool, enum_res):
+                if enum_tool == 'ffuf':
+                    for row in [r for r in enum_res.stdout.splitlines() if r.strip().startswith('{')]:
+                        try:
+                            obj = json.loads(row)
+                            endpoints.append({'path': obj.get('url', ''), 'status_code': obj.get('status')})
+                        except json.JSONDecodeError:
+                            continue
+                else:
+                    endpoints = parse_gobuster_json(enum_res.stdout)
+                RawEvidence.objects.create(
+                    organization=scan.organization,
+                    scan_execution=scan,
+                    source=enum_tool,
+                    host=target,
+                    payload={'endpoints': endpoints},
+                    raw_output=enum_res.stdout,
+                    metadata={'stderr': enum_res.stderr, 'command': enum_res.command, 'scan_type': scan_type},
+                )
 
         # 3) Vulnerabilidades
         nuclei_required = scan_type == 'web_full'
@@ -380,6 +389,10 @@ class ScanPipelineService:
         wordpress_detected = ('wordpress' in tech_lc) or (scan_type in {'web_wordpress', 'wordpress_scan'})
         if wordpress_detected:
             cms = 'wordpress'
+            if not tool_presence.get('wpscan'):
+                warnings.append(
+                    'WordPress detectado, pero WPScan no está disponible; se omite el escaneo específico de WordPress.'
+                )
             wp_res = self.external_runner.run('wpscan', ['--url', target, '--format', 'json', '--no-update'])
             if _record_module('wpscan', wp_res, required=scan_type in {'web_wordpress', 'wordpress_scan'}):
                 wp_payload = parse_wpscan_json(wp_res.stdout)
@@ -481,6 +494,7 @@ class ScanPipelineService:
             'scan_type': scan_type,
             'category': 'web',
             'tools': tools_executed,
+            'tools_available': tools_available,
             'tools_executed': tools_executed,
             'tools_skipped': tools_skipped,
             'dependency_checks': dependency_checks,
@@ -501,6 +515,7 @@ class ScanPipelineService:
                 'vulnerabilities': vulnerabilities,
                 'headers': headers,
                 'cms': cms,
+                'tools_available': tools_available,
                 'tools_executed': tools_executed,
                 'tools_skipped': tools_skipped,
                 'dependency_checks': dependency_checks,

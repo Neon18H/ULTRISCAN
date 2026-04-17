@@ -80,6 +80,7 @@
 <div class="card metric-card mb-3">
   <div class="card-body">
     <h5 class="mb-3">Resultados por módulo</h5>
+    <div class="mb-2"><strong>Disponibles:</strong> {{ object.summary.tools_available|default:'-' }}</div>
     <div class="mb-2"><strong>Ejecutadas:</strong> {{ object.summary.tools_executed|default:object.summary.tools|default:'-' }}</div>
     {% if object.summary.tools_skipped %}
       <div class="mb-3"><strong>Omitidas:</strong>
