@@ -3,9 +3,10 @@ import logging
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
+from django.http import Http404
 from django.shortcuts import redirect
 from django.urls import reverse
-from django.views.generic import DetailView, ListView, TemplateView
+from django.views.generic import DetailView, ListView, TemplateView, View
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -13,6 +14,7 @@ from rest_framework.response import Response
 from accounts.permissions import TenantAccessPermission
 from accounts.tenancy import TenantQuerysetMixin, get_active_organization
 from core.tenant_api import TenantModelViewSetMixin
+from dashboard.reports import build_scan_report_pdf
 
 from .forms import CreateScanForm, SCAN_TYPE_HELP, SCAN_TYPE_TO_PROFILE
 from .models import ScanExecution
@@ -185,6 +187,8 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         vulnerabilities = self._as_list(structured_results.get('vulnerabilities'))
         http_headers = self._as_dict(structured_results.get('headers'))
         metadata = self._as_dict(structured_results.get('metadata'))
+        redirects = self._as_list(structured_results.get('redirects'))
+        web_basic_findings = self._as_list(structured_results.get('web_findings_basic'))
 
         return {
             'summary': summary,
@@ -216,6 +220,8 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             'cms': structured_results.get('cms') or '',
             'http_headers': http_headers,
             'metadata': metadata,
+            'redirects': redirects,
+            'web_basic_findings': web_basic_findings,
             'status_label': self._build_status_label(summary),
         }
 
@@ -242,3 +248,16 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         context = super().get_context_data(**kwargs)
         context.update(self._normalize_scan_results())
         return context
+
+
+class ScanReportPdfView(LoginRequiredMixin, TenantQuerysetMixin, View):
+    def get(self, request, *args, **kwargs):
+        scan = (
+            ScanExecution.objects.select_related('asset', 'profile', 'launched_by')
+            .prefetch_related('findings')
+            .filter(organization=get_active_organization(request.user), pk=kwargs.get('pk'))
+            .first()
+        )
+        if not scan:
+            raise Http404('Scan no encontrado.')
+        return build_scan_report_pdf(scan=scan, generated_by=request.user)

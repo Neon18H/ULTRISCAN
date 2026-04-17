@@ -5,7 +5,12 @@
     <h2 class="mb-1">Scan #{{ object.id }}</h2>
     <p class="text-muted mb-0">{{ object.asset.name }} · {{ object.profile.name }}</p>
   </div>
-  <span class="badge status-badge status-{{ object.status }}">{{ object.get_status_display }}</span>
+  <div class="d-flex align-items-center gap-2">
+    <a href="{% url 'scans-report-pdf' object.id %}" class="btn btn-sm btn-outline-primary">
+      <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF
+    </a>
+    <span class="badge status-badge status-{{ object.status }}">{{ object.get_status_display }}</span>
+  </div>
 </div>
 
 <div class="row g-3 mb-3">
@@ -48,15 +53,49 @@
 
 <div class="card metric-card mb-3">
   <div class="card-body">
-    <h5 class="mb-3">Resultados estructurados web</h5>
+    <h5 class="mb-3">Resultados web enterprise</h5>
     <div class="row g-3">
+      <div class="col-md-3"><div class="small text-muted">URL objetivo</div><div class="fw-semibold text-truncate">{{ structured_results.target|default:object.asset.value }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">Estado HTTP</div><div class="fw-semibold">{{ structured_results.http_status|default:'N/A' }}</div></div>
       <div class="col-md-3"><div class="small text-muted">CMS</div><div class="fw-semibold">{{ cms|default:'No disponible' }}</div></div>
       <div class="col-md-3"><div class="small text-muted">Tecnologías</div><div class="fw-semibold">{{ technologies|length|default:0 }}</div></div>
       <div class="col-md-3"><div class="small text-muted">Endpoints</div><div class="fw-semibold">{{ endpoints|length|default:0 }}</div></div>
       <div class="col-md-3"><div class="small text-muted">Vulnerabilidades</div><div class="fw-semibold">{{ vulnerabilities|length|default:0 }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Fingerprint</div><div class="fw-semibold">{% if fingerprint %}Detectado{% else %}No disponible{% endif %}</div></div>
-      <div class="col-md-9"><div class="small text-muted">Headers HTTP</div><div class="fw-semibold"><code>{% if http_headers %}{{ http_headers }}{% else %}Sin datos{% endif %}</code></div></div>
+      <div class="col-md-3"><div class="small text-muted">Fingerprint</div><div class="fw-semibold">{% if fingerprint.plugins %}Detectado{% else %}No disponible{% endif %}</div></div>
     </div>
+    {% if technologies %}
+      <hr>
+      <div class="small text-muted mb-2">Tecnologías detectadas</div>
+      <div class="d-flex flex-wrap gap-2">
+        {% for technology in technologies %}
+          <span class="badge rounded-pill text-bg-light border">{{ technology }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% if fingerprint %}
+      <hr>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <h6 class="mb-2">Fingerprint web</h6>
+          <div class="small text-muted">Server</div><div class="fw-semibold">{{ fingerprint.server|default:'n/a' }}</div>
+          <div class="small text-muted mt-2">X-Powered-By</div><div class="fw-semibold">{{ fingerprint.x_powered_by|default:'n/a' }}</div>
+          <div class="small text-muted mt-2">IP</div><div class="fw-semibold">{{ fingerprint.ip|default:'n/a' }}</div>
+        </div>
+        <div class="col-md-6">
+          <h6 class="mb-2">Headers HTTP</h6>
+          <div class="small"><code>{% if http_headers %}{{ http_headers }}{% else %}Sin datos{% endif %}</code></div>
+        </div>
+      </div>
+    {% endif %}
+    {% if redirects %}
+      <hr>
+      <h6 class="mb-2">Redirecciones detectadas</h6>
+      <ul class="mb-0">
+        {% for redirect in redirects %}
+          <li><code>{{ redirect }}</code></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
     {% if not structured_results %}
       <p class="text-muted mt-3 mb-0">Aún no hay resultados estructurados.</p>
     {% endif %}
@@ -65,7 +104,7 @@
 
 <div class="card metric-card mb-3">
   <div class="card-body">
-    <h5 class="mb-3">Servicios detectados</h5>
+    <h5 class="mb-3">Servicios detectados (infra/correlación)</h5>
     <div class="table-responsive">
       <table class="table table-enterprise align-middle mb-0">
         <thead><tr><th>Host</th><th>Puerto</th><th>Servicio</th><th>Producto</th><th>Estado</th></tr></thead>
@@ -86,6 +125,48 @@
     </div>
   </div>
 </div>
+
+{% if endpoints %}
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h5 class="mb-3">Endpoints descubiertos</h5>
+    <div class="table-responsive">
+      <table class="table table-enterprise align-middle mb-0">
+        <thead><tr><th>Path</th><th>Status</th><th>Fuente</th><th>URL</th></tr></thead>
+        <tbody>
+          {% for endpoint in endpoints %}
+          <tr>
+            <td><code>{{ endpoint.path }}</code></td>
+            <td><span class="badge text-bg-light border">{{ endpoint.status_code|default:'n/a' }}</span></td>
+            <td>{{ endpoint.source|default:'n/a' }}</td>
+            <td class="text-truncate" style="max-width:380px;"><code>{{ endpoint.url|default:'-' }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if web_basic_findings %}
+<div class="card metric-card mb-3">
+  <div class="card-body">
+    <h5 class="mb-3">Hallazgos web básicos</h5>
+    <ul class="list-group list-group-flush">
+      {% for finding in web_basic_findings %}
+      <li class="list-group-item px-0 d-flex justify-content-between align-items-start">
+        <div>
+          <div class="fw-semibold">{{ finding.title }}</div>
+          <div class="small text-muted">{{ finding.evidence }}</div>
+        </div>
+        <span class="badge text-bg-secondary">{{ finding.severity|upper }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
 
 <div class="card metric-card mb-3">
   <div class="card-body">

@@ -460,3 +460,31 @@ class WebScanPipelineTests(TestCase):
         self.assertIn('gobuster terminó con código 1.', ' '.join(result.summary['warnings']))
         self.assertIn('ffuf', result.summary['tools_executed'])
         self.assertGreaterEqual(result.summary['endpoints_count'], 1)
+        self.assertEqual(result.engine_metadata['structured_results']['endpoints'][0]['source'], 'ffuf')
+
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
+    def test_gobuster_command_uses_compatible_flags(self, mocked_run):
+        mocked_run.return_value = ToolExecutionResult(tool='gobuster', command='gobuster', return_code=0, stdout='', stderr='')
+        service = ScanPipelineService()
+
+        service.run_gobuster('https://example.com', '/tmp/common.txt')
+
+        _tool, args = mocked_run.call_args.args[:2]
+        self.assertEqual(_tool, 'gobuster')
+        self.assertNotIn('--format', args)
+        self.assertIn('--no-color', args)
+        self.assertIn('-q', args)
+
+    @patch('scans.services.scan_pipeline.ExternalToolRunner.run')
+    def test_nuclei_command_is_worker_friendly(self, mocked_run):
+        mocked_run.return_value = ToolExecutionResult(tool='nuclei', command='nuclei', return_code=0, stdout='', stderr='')
+        service = ScanPipelineService()
+
+        service.run_nuclei('https://example.com', Path('/tmp/nuclei-templates'))
+
+        _tool, args = mocked_run.call_args.args[:2]
+        self.assertEqual(_tool, 'nuclei')
+        self.assertIn('-c', args)
+        self.assertIn('-rl', args)
+        self.assertIn('-bs', args)
+        self.assertIn('-retries', args)
