@@ -47,5 +47,36 @@
     "cvss": 6.1,
     "description": "nginx version appears in an older family branch. Validate lifecycle and upgrade policy.",
     "remediation": "upgrade_software"
+  },
+  {
+    "title": "MySQL 5.7 end-of-life",
+    "product": "MySQL",
+    "service_name": "mysql",
+    "port": 3306,
+    "protocol": "tcp",
+    "required_state": "open",
+    "min_version": "5.7.0",
+    "max_version": "5.7.99",
+    "severity": "high",
+    "confidence": "high",
+    "cvss": 8.4,
+    "description": "MySQL 5.7 reached end of life and no longer receives regular security fixes from Oracle.",
+    "eol_date": "2023-10-21",
+    "remediation": "upgrade_software"
+  },
+  {
+    "title": "OpenSSH legacy family branch",
+    "product": "OpenSSH",
+    "service_name": "ssh",
+    "port": 22,
+    "protocol": "tcp",
+    "required_state": "open",
+    "version_operator": "<",
+    "version_value": "8.0",
+    "severity": "high",
+    "confidence": "high",
+    "cvss": 7.9,
+    "description": "OpenSSH version belongs to a legacy family branch with elevated operational and security risk.",
+    "remediation": "upgrade_software"
   }
 ]

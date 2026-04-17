@@ -6,7 +6,7 @@ from typing import Any
 
 from django.db.models import Q, QuerySet
 
-from knowledge_base.models import ExternalAdvisory, ProductAlias
+from knowledge_base.models import ExternalAdvisory, Product, ProductAlias
 from scans.services.versioning import compare_versions, normalize_version
 
 
@@ -21,7 +21,7 @@ class AdvisoryCandidate:
 
 
 class FindingNvdCorrelationService:
-    MINIMUM_CANDIDATE_SCORE = 5
+    MINIMUM_CANDIDATE_SCORE = 8
 
     def correlate(self, finding) -> dict[str, Any]:
         cve_id = (
@@ -49,7 +49,9 @@ class FindingNvdCorrelationService:
             return self._no_match_payload(finding)
 
         token_bundle = self._build_tokens(finding)
-        candidates = self._search_candidates(token_bundle, service_finding.normalized_version or service_finding.version)
+        if not token_bundle['product_aliases']:
+            return self._no_match_payload(finding)
+        candidates = self._search_candidates(token_bundle, token_bundle['version'])
         if candidates:
             return {
                 'status': 'candidate',
@@ -84,73 +86,56 @@ class FindingNvdCorrelationService:
 
     def _build_tokens(self, finding) -> dict[str, Any]:
         service_finding = finding.service_finding
-        aliases = set()
+        aliases: set[str] = set()
         normalized_product = (service_finding.normalized_product or '').strip()
+        if service_finding.product:
+            aliases.add(service_finding.product.strip().lower())
         if normalized_product:
+            aliases.add(normalized_product.lower())
             aliases.update(
-                ProductAlias.objects.filter(product__name__iexact=normalized_product)
+                alias.lower()
+                for alias in ProductAlias.objects.filter(product__name__iexact=normalized_product)
                 .values_list('alias', flat=True)
             )
+        normalized_product_obj = Product.objects.filter(name__iexact=normalized_product).first() if normalized_product else None
+        vendor = (normalized_product_obj.vendor or '').strip().lower() if normalized_product_obj else ''
 
-        technologies = set()
-        raw_payload = (finding.raw_evidence.payload if finding.raw_evidence else {}) or {}
-        metadata = (finding.raw_evidence.metadata if finding.raw_evidence else {}) or {}
-        for source in [raw_payload, metadata, service_finding.scripts]:
-            technologies.update(self._extract_technologies(source))
-
-        normalized_version = normalize_version(service_finding.normalized_version or service_finding.version)
-        names = {
-            value.lower().strip()
-            for value in [
-                service_finding.service,
-                service_finding.product,
-                normalized_product,
-                finding.title,
-                finding.description,
-                *aliases,
-                *technologies,
-            ]
-            if value
-        }
+        normalized_version = normalize_version(service_finding.normalized_version or service_finding.raw_version or service_finding.version)
+        detected_cpes = self._extract_detected_cpes(finding)
         return {
-            'names': {name for name in names if len(name) >= 3},
             'service_name': (service_finding.service or '').lower(),
             'protocol': (service_finding.protocol or '').lower(),
             'port': service_finding.port,
             'version': normalized_version,
+            'product_aliases': {name for name in aliases if len(name) >= 3},
+            'vendor_aliases': {vendor} if vendor else set(),
+            'detected_cpes': detected_cpes,
         }
 
-    def _extract_technologies(self, value: Any) -> set[str]:
-        out: set[str] = set()
-        if isinstance(value, dict):
-            for k, v in value.items():
-                if any(h in str(k).lower() for h in ['tech', 'product', 'service', 'fingerprint']):
-                    out.add(str(v).lower())
-                out.update(self._extract_technologies(v))
-        elif isinstance(value, list):
-            for item in value:
-                out.update(self._extract_technologies(item))
-        elif isinstance(value, str):
-            clean = value.strip().lower()
-            if clean and len(clean) > 2:
-                out.add(clean)
-        return out
+    def _extract_detected_cpes(self, finding) -> set[str]:
+        cpes: set[str] = set()
+        raw_payload = (finding.raw_evidence.payload if finding.raw_evidence else {}) or {}
+        for parsed_port in (raw_payload.get('ports') or []):
+            cpe_value = (parsed_port.get('cpe') or '').strip().lower()
+            if cpe_value:
+                cpes.add(cpe_value)
+        return cpes
 
     def _search_candidates(self, token_bundle: dict[str, Any], observed_version: str) -> list[AdvisoryCandidate]:
-        names = list(token_bundle['names'])[:24]
+        names = list(token_bundle['product_aliases'])[:24]
         criteria_query = Q()
-        text_query = Q()
         for token in names:
             criteria_query |= Q(cpe_matches__criteria__icontains=token)
-            text_query |= Q(description__icontains=token) | Q(title__icontains=token)
 
         query: QuerySet[ExternalAdvisory] = (
             ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD)
             .prefetch_related('cpe_matches')
             .distinct()
         )
-        if criteria_query or text_query:
-            query = query.filter(criteria_query | text_query)
+        if criteria_query:
+            query = query.filter(criteria_query)
+        else:
+            return []
 
         scored: list[AdvisoryCandidate] = []
         for advisory in query[:250]:
@@ -162,28 +147,37 @@ class FindingNvdCorrelationService:
     def _score_advisory(self, advisory: ExternalAdvisory, token_bundle: dict[str, Any], observed_version: str) -> tuple[int, list[str]]:
         score = 0
         reasons: list[str] = []
-        description_blob = f'{advisory.title} {advisory.description}'.lower()
-        token_hits = 0
-        for token in token_bundle['names']:
-            if token and token in description_blob:
-                token_hits += 1
-        if token_hits:
-            score += min(token_hits * 2, 8)
-            reasons.append(f'{token_hits} coincidencias en descripción/título')
-
         version_candidate = normalize_version(observed_version)
+        cpe_product_match = False
+        vendor_match = False
+        version_match = False
+        detected_cpes = token_bundle['detected_cpes']
         for cpe in advisory.cpe_matches.all():
             vendor, product, _ = self._parse_cpe(cpe.criteria)
-            if vendor and vendor in token_bundle['names']:
-                score += 2
-                reasons.append(f'vendor CPE: {vendor}')
-            if product and product in token_bundle['names']:
-                score += 4
+            if vendor and vendor in token_bundle['vendor_aliases']:
+                vendor_match = True
+            if product and product in token_bundle['product_aliases']:
+                cpe_product_match = True
                 reasons.append(f'producto CPE: {product}')
+                if vendor_match:
+                    reasons.append(f'vendor CPE: {vendor}')
+                if detected_cpes and any(product in detected_cpe for detected_cpe in detected_cpes):
+                    reasons.append('CPE detectado en evidencia')
 
             if version_candidate and self._cpe_version_matches(cpe, version_candidate):
-                score += 3
+                version_match = True
                 reasons.append(f'versión compatible ({version_candidate})')
+
+        if not cpe_product_match:
+            return 0, ['sin match de producto CPE']
+
+        score += 6
+        if vendor_match:
+            score += 2
+        if version_match:
+            score += 6
+        elif version_candidate:
+            reasons.append('sin match fuerte de versión en rango CPE')
 
         if advisory.severity in {'critical', 'high'}:
             score += 1

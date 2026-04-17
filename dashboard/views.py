@@ -346,9 +346,22 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
                 or getattr(service_finding, 'normalized_product', '')
                 or getattr(service_finding, 'product', '')
             ),
+            'normalized_product': (
+                detected_product.get('normalized_product')
+                or getattr(service_finding, 'normalized_product', '')
+            ),
+            'raw_product': (
+                detected_product.get('product')
+                or getattr(service_finding, 'product', '')
+            ),
             'detected_version': (
                 detected_version.get('version_used_for_matching')
                 or detected_version.get('normalized_version')
+                or getattr(service_finding, 'raw_version', '')
+                or getattr(service_finding, 'version', '')
+            ),
+            'raw_version': (
+                detected_version.get('raw_version')
                 or getattr(service_finding, 'raw_version', '')
                 or getattr(service_finding, 'version', '')
             ),
@@ -357,7 +370,10 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
                 or getattr(service_finding, 'normalized_version', '')
             ),
             'matched_rule': trace.get('rule_title') or getattr(matched_rule, 'title', ''),
+            'matched_rule_type': trace.get('rule_type') or '',
             'correlation_reason': correlation_reason,
+            'detected_cpe': detected_product.get('detected_cpe') or '',
+            'family_aliases': detected_product.get('family_aliases') or [],
             'evidence_source': (
                 source_evidence.get('source')
                 or getattr(raw_evidence, 'source', '')

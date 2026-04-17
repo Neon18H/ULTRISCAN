@@ -80,3 +80,59 @@ class InfraScanPipelineTests(TestCase):
 
         self.assertFalse(exc.exception.retryable)
         self.assertEqual(exc.exception.reason, 'nmap_timeout')
+
+    @patch('scans.services.scan_pipeline.NmapRunner.run')
+    def test_infra_deep_accepts_bytes_xml_and_recovers_partial_hosts(self, mocked_run):
+        mocked_run.return_value = NmapRunResult(
+            command='nmap -oX - -sT -sV -Pn -n --unprivileged -p- --script default,safe 10.0.0.8',
+            return_code=124,
+            stdout='',
+            stderr='Nmap scan timed out after 900 seconds and output may be truncated.',
+            xml_output=(
+                b"<nmaprun><host><status state='up'/><address addr='10.0.0.8' addrtype='ipv4'/>"
+                b"<ports><port protocol='tcp' portid='21'><state state='open'/>"
+                b"<service name='ftp' product='vsftpd' version='3.0.3' extrainfo='Debian'/></port></ports></host>"
+            ),
+            metadata={'timed_out': True, 'timeout_seconds': 900, 'profile': 'infra_deep'},
+        )
+        scan = ScanExecution.objects.create(
+            organization=self.org,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            engine_metadata={'requested_scan_type': 'infra_deep'},
+        )
+
+        result = ScanPipelineService().execute(scan)
+        service = scan.service_findings.first()
+
+        self.assertEqual(result.summary['hosts'], 1)
+        self.assertTrue(result.summary['partial_result'])
+        self.assertIsNotNone(service)
+        self.assertEqual(service.product, 'vsftpd')
+        self.assertEqual(service.raw_version, '3.0.3 Debian')
+        self.assertEqual(service.normalized_version, '3.0.3')
+
+    @patch('scans.services.scan_pipeline.NmapRunner.run')
+    def test_parse_error_is_reported_without_bytes_str_typeerror(self, mocked_run):
+        mocked_run.return_value = NmapRunResult(
+            command='nmap -oX - -sT -sV -Pn -n --unprivileged -p- --script default,safe 10.0.0.8',
+            return_code=0,
+            stdout='',
+            stderr='',
+            xml_output=b"<nmaprun><host><status state='up'><broken>",
+            metadata={'timed_out': False, 'timeout_seconds': 900, 'profile': 'infra_deep'},
+        )
+        scan = ScanExecution.objects.create(
+            organization=self.org,
+            asset=self.asset,
+            profile=self.profile,
+            launched_by=self.user,
+            engine_metadata={'requested_scan_type': 'infra_deep'},
+        )
+
+        with self.assertRaises(ScanPipelineExecutionError) as exc:
+            ScanPipelineService().execute(scan)
+
+        self.assertEqual(exc.exception.reason, 'nmap_parse_error')
+        self.assertNotIn('bytes-like object is required', str(exc.exception))

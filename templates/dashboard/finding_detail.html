@@ -37,21 +37,29 @@
           <div class="fw-semibold">{{ object.service_finding.normalized_product|default:object.service_finding.product|default:'No identificado' }}</div>
         </div>
         <div class="col-md-4">
-          <div class="small text-muted">Matched from product</div>
-          <div class="fw-semibold">{{ correlation_context.detected_product|default:'No disponible' }}</div>
+          <div class="small text-muted">Producto raw / fingerprint</div>
+          <div class="fw-semibold">{{ correlation_context.raw_product|default:'No disponible' }}</div>
         </div>
         <div class="col-md-4">
           <div class="small text-muted">Versión detectada (raw)</div>
-          <div class="fw-semibold">{{ object.service_finding.raw_version|default:object.service_finding.version|default:'-' }}</div>
+          <div class="fw-semibold">{{ correlation_context.raw_version|default:'-' }}</div>
+        </div>
+        <div class="col-md-4">
+          <div class="small text-muted">Producto normalizado</div>
+          <div class="fw-semibold">{{ correlation_context.normalized_product|default:'Sin dato' }}</div>
         </div>
         <div class="col-md-4">
           <div class="small text-muted">Versión normalizada</div>
           <div class="fw-semibold">{{ correlation_context.normalized_version|default:'Sin dato' }}</div>
         </div>
+        <div class="col-md-4">
+          <div class="small text-muted">Match product/version</div>
+          <div class="fw-semibold">{{ correlation_context.detected_product|default:'No disponible' }} / {{ correlation_context.detected_version|default:'-' }}</div>
+        </div>
         <div class="col-md-6">
           <div class="small text-muted">Rule matched</div>
           <div class="fw-semibold">{{ correlation_context.matched_rule|default:'No disponible' }}</div>
-          <div class="small text-muted">{{ matched_rule_type }}</div>
+          <div class="small text-muted">{{ matched_rule_type }}{% if correlation_context.matched_rule_type %} · {{ correlation_context.matched_rule_type }}{% endif %}</div>
         </div>
         <div class="col-md-6">
           <div class="small text-muted">Motivo de generación / match</div>
@@ -60,6 +68,13 @@
         <div class="col-md-6">
           <div class="small text-muted">Matched from version</div>
           <div class="fw-semibold">{{ correlation_context.detected_version|default:'No disponible' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="small text-muted">CPE detectado / familia</div>
+          <div class="fw-semibold">{{ correlation_context.detected_cpe|default:'Sin CPE detectado' }}</div>
+          {% if correlation_context.family_aliases %}
+          <div class="small text-muted">{{ correlation_context.family_aliases|join:', ' }}</div>
+          {% endif %}
         </div>
         <div class="col-md-6">
           <div class="small text-muted">Evidence source</div>

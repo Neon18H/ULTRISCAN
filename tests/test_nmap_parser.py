@@ -11,3 +11,11 @@ class NmapParserTests(SimpleTestCase):
         self.assertEqual(parsed.hosts[0].state, 'up')
         self.assertEqual(parsed.hosts[0].ports[0].service, 'ssh')
         self.assertEqual(parsed.hosts[0].ports[0].scripts[0].script_id, 'ssh-hostkey')
+        self.assertEqual(parsed.hosts[0].ports[0].product, 'OpenSSH')
+        self.assertEqual(parsed.hosts[0].ports[0].version, '8.9')
+        self.assertEqual(parsed.hosts[0].ports[0].extrainfo, 'Ubuntu')
+
+    def test_parse_service_cpe_for_downstream_cve_correlation(self):
+        xml = """<nmaprun><host><status state='up'/><address addr='10.0.0.5' addrtype='ipv4'/><ports><port protocol='tcp' portid='21'><state state='open'/><service name='ftp' product='vsftpd' version='3.0.5' cpe='cpe:/a:vsftpd:vsftpd:3.0.5'/></port></ports></host></nmaprun>"""
+        parsed = NmapXmlParser().parse(xml)
+        self.assertEqual(parsed.hosts[0].ports[0].cpe, 'cpe:/a:vsftpd:vsftpd:3.0.5')
