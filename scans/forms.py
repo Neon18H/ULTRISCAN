@@ -20,13 +20,103 @@ SCAN_TYPE_CHOICES = [
 WEB_APPSEC_MODULE_CHOICES = [
     ('xss', 'XSS'),
     ('sqli', 'SQL Injection'),
-    ('misconfig', 'Security Misconfiguration'),
+    ('misconfig', 'Security Misconfiguration / Review'),
     ('csrf', 'CSRF Review'),
     ('idor', 'Broken Access Control / IDOR surface'),
     ('auth', 'Broken Authentication surface'),
     ('upload', 'File Upload surface'),
     ('ssrf', 'SSRF surface'),
     ('endpoint_discovery', 'Endpoint Discovery / Hidden APIs'),
+]
+
+WEB_APPSEC_MODULE_DETAILS = {
+    'xss': {
+        'description': 'Detecta reflejos de payloads y señales de Cross-Site Scripting.',
+        'tool': 'dalfox',
+        'impact': 'Ejecución de JavaScript malicioso, secuestro de sesión y defacement.',
+        'severity': 'high',
+    },
+    'sqli': {
+        'description': 'Identifica parámetros potencialmente inyectables sobre endpoints dinámicos.',
+        'tool': 'sqlmap',
+        'impact': 'Exfiltración, alteración o destrucción de datos en base de datos.',
+        'severity': 'critical',
+    },
+    'auth': {
+        'description': 'Revisa superficies de autenticación débil y puntos de acceso sensibles.',
+        'tool': 'httpx + revisión de flujos',
+        'impact': 'Acceso no autorizado y toma de cuentas.',
+        'severity': 'high',
+    },
+    'idor': {
+        'description': 'Mapea indicadores de control de acceso insuficiente entre recursos.',
+        'tool': 'katana + revisión heurística',
+        'impact': 'Exposición o modificación de datos de otros usuarios.',
+        'severity': 'high',
+    },
+    'csrf': {
+        'description': 'Marca formularios y acciones críticas que requieren validación anti-CSRF.',
+        'tool': 'análisis de formularios + revisión estructural',
+        'impact': 'Ejecución de acciones no autorizadas en contexto de víctima autenticada.',
+        'severity': 'medium',
+    },
+    'ssrf': {
+        'description': 'Evalúa superficie de SSRF en entradas con URLs, webhooks o fetch remotos.',
+        'tool': 'enumeración de parámetros y endpoints',
+        'impact': 'Acceso a red interna, metadata cloud y pivote lateral.',
+        'severity': 'high',
+    },
+    'endpoint_discovery': {
+        'description': 'Descubre rutas ocultas, APIs internas y endpoints no documentados.',
+        'tool': 'katana + ffuf',
+        'impact': 'Ampliación de superficie de ataque y exposición de funcionalidades sensibles.',
+        'severity': 'medium',
+    },
+    'upload': {
+        'description': 'Revisa puntos de carga de archivos y validaciones de tipo/contenido.',
+        'tool': 'enumeración de formularios y endpoints',
+        'impact': 'Subida de archivos maliciosos, web shells o bypass de controles.',
+        'severity': 'high',
+    },
+    'misconfig': {
+        'description': 'Busca desviaciones de hardening, headers débiles y configuraciones inseguras.',
+        'tool': 'zap-baseline.py + nuclei/nikto',
+        'impact': 'Incremento del riesgo global por controles de seguridad mal aplicados.',
+        'severity': 'medium',
+    },
+}
+
+WEB_APPSEC_MODULE_GROUPS = [
+    {
+        'id': 'injection-attacks',
+        'name': 'Injection Attacks',
+        'icon': 'bi-bug',
+        'modules': ['xss', 'sqli'],
+    },
+    {
+        'id': 'authentication-access',
+        'name': 'Authentication & Access',
+        'icon': 'bi-shield-lock',
+        'modules': ['auth', 'idor'],
+    },
+    {
+        'id': 'application-logic',
+        'name': 'Application Logic',
+        'icon': 'bi-diagram-3',
+        'modules': ['csrf', 'ssrf'],
+    },
+    {
+        'id': 'discovery-surface',
+        'name': 'Discovery & Surface',
+        'icon': 'bi-binoculars',
+        'modules': ['endpoint_discovery', 'upload'],
+    },
+    {
+        'id': 'security-misconfiguration',
+        'name': 'Security Misconfiguration',
+        'icon': 'bi-sliders2',
+        'modules': ['misconfig'],
+    },
 ]
 
 WEB_APPSEC_AGGRESSIVENESS_CHOICES = [
