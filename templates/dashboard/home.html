@@ -28,6 +28,8 @@
 
 
 <div class="row g-3 mb-4">
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Exploits sincronizados' value=exploits_total icon='bi-lightning-charge-fill' helper='Total importado desde ExploitDB' %}</div>
+  <div class="col-sm-6 col-xl-3">{% include 'includes/metrics_card.html' with title='Exploits recientes' value=recent_exploits_total icon='bi-calendar-week' helper='Nuevos en últimos 30 días' %}</div>
   <div class="col-sm-6 col-xl-4">{% include 'includes/metrics_card.html' with title='CVEs con exploit público' value=cves_with_exploit_total icon='bi-bug-fill' helper='Correladas con ExploitDB' %}</div>
   <div class="col-sm-6 col-xl-4">{% include 'includes/metrics_card.html' with title='Findings explotables' value=exploitable_findings_total icon='bi-lightning-charge' helper='Hallazgos con exploit conocido' %}</div>
   <div class="col-sm-6 col-xl-4">{% include 'includes/metrics_card.html' with title='Exposición real (%)' value=real_exposure_percentage icon='bi-graph-up-arrow' helper='Open vuln findings con exploit' %}</div>

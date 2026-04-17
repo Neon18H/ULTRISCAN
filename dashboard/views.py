@@ -15,7 +15,7 @@ from accounts.tenancy import TenantQuerysetMixin, get_active_membership, get_act
 from assets.models import Asset
 from findings.models import Finding
 from findings.nvd_correlation import FindingNvdCorrelationService
-from knowledge_base.models import AdvisorySyncJob, CVEExploit, ExternalAdvisory, VulnerabilityRule
+from knowledge_base.models import AdvisorySyncJob, CVEExploit, Exploit, ExternalAdvisory, VulnerabilityRule
 from scan_profiles.models import ScanProfile
 from scans.models import ScanExecution, ServiceFinding
 
@@ -57,6 +57,8 @@ class DashboardHomeView(LoginRequiredMixin, TemplateView):
                     'exploitable_findings_total': 0,
                     'real_exposure_percentage': 0,
                     'top_exploitable_vulns': [],
+                    'exploits_total': 0,
+                    'recent_exploits_total': 0,
                 }
             )
             return context
@@ -187,6 +189,11 @@ class DashboardHomeView(LoginRequiredMixin, TemplateView):
                 .annotate(total=Count('id'))
                 .order_by('-total', 'vulnerability_rule__cve')[:5]
             ),
+        )
+        context['exploits_total'] = safe_query(0, lambda: Exploit.objects.count())
+        context['recent_exploits_total'] = safe_query(
+            0,
+            lambda: Exploit.objects.filter(created_at__gte=timezone.now() - timedelta(days=30)).count(),
         )
 
         recent_scans = context['recent_scans']
@@ -786,6 +793,264 @@ class KnowledgeBaseDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailVie
             if product:
                 technology_labels.append(f'{vendor} {product}'.strip())
         context['technology_labels'] = sorted(set(technology_labels))
+        return context
+
+    def test_func(self):
+        if self.request.user.is_staff:
+            return True
+        membership = get_active_membership(self.request.user)
+        if not membership:
+            return False
+        return membership.role in {'owner', 'admin'}
+
+
+class ExploitListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
+    model = Exploit
+    template_name = 'dashboard/exploit_list.html'
+    paginate_by = 25
+
+    def get_queryset(self):
+        queryset = (
+            Exploit.objects.annotate(
+                cve_links_count=Count('cve_links', distinct=True),
+            )
+            .order_by('-created_at', '-exploit_id')
+        )
+        return self.apply_filters(queryset)
+
+    def apply_filters(self, queryset):
+        params = self.request.GET
+        cve_id = params.get('cve_id', '').strip().upper()
+        if cve_id:
+            queryset = queryset.filter(Q(cve__icontains=cve_id) | Q(cve_links__cve__cve_id__icontains=cve_id))
+
+        platform = params.get('platform', '').strip()
+        if platform:
+            queryset = queryset.filter(platform__icontains=platform)
+
+        exploit_type = params.get('type', '').strip()
+        if exploit_type:
+            queryset = queryset.filter(type__icontains=exploit_type)
+
+        correlation = params.get('correlation', '').strip().lower()
+        if correlation in {'correlated', 'true', '1'}:
+            queryset = queryset.filter(cve_links__isnull=False)
+        elif correlation in {'uncorrelated', 'false', '0'}:
+            queryset = queryset.filter(cve_links__isnull=True)
+
+        has_findings = params.get('has_findings', '').strip().lower()
+        finding_cve_ids = Finding.objects.exclude(vulnerability_rule__cve='').values_list('vulnerability_rule__cve', flat=True).distinct()
+        if has_findings in {'true', '1', 'yes'}:
+            queryset = queryset.filter(Q(cve__in=finding_cve_ids) | Q(cve_links__cve__cve_id__in=finding_cve_ids))
+        elif has_findings in {'false', '0', 'no'}:
+            queryset = queryset.exclude(Q(cve__in=finding_cve_ids) | Q(cve_links__cve__cve_id__in=finding_cve_ids))
+
+        created_from = params.get('date_from', '').strip()
+        if created_from:
+            queryset = queryset.filter(created_at__date__gte=created_from)
+
+        created_to = params.get('date_to', '').strip()
+        if created_to:
+            queryset = queryset.filter(created_at__date__lte=created_to)
+
+        query = params.get('query', '').strip()
+        if query:
+            queryset = queryset.filter(
+                Q(title__icontains=query) |
+                Q(file_path__icontains=query) |
+                Q(cve__icontains=query)
+            )
+
+        return queryset.distinct()
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        exploitable_cve_ids = safe_query(
+            [],
+            lambda: list(CVEExploit.objects.values_list('cve__cve_id', flat=True).distinct()),
+        )
+        org = get_active_organization(self.request.user)
+        open_exploitable_findings = safe_query(
+            0,
+            lambda: Finding.objects.filter(
+                organization=org,
+                status=Finding.Status.OPEN,
+                vulnerability_rule__cve__in=exploitable_cve_ids,
+            ).count(),
+        )
+        open_total_findings = safe_query(
+            0,
+            lambda: Finding.objects.filter(
+                organization=org,
+                status=Finding.Status.OPEN,
+                vulnerability_rule__isnull=False,
+            ).count(),
+        )
+
+        context['exploits_total'] = safe_query(0, lambda: Exploit.objects.count())
+        context['cves_with_exploit_total'] = len(exploitable_cve_ids)
+        context['exploitable_findings_total'] = open_exploitable_findings
+        context['real_exposure_percentage'] = round((open_exploitable_findings / open_total_findings) * 100, 1) if open_total_findings else 0
+        context['recent_exploits_total'] = safe_query(
+            0, lambda: Exploit.objects.filter(created_at__gte=timezone.now() - timedelta(days=30)).count()
+        )
+        top_platform = safe_query(
+            None,
+            lambda: Exploit.objects.exclude(platform='').values('platform').annotate(total=Count('id')).order_by('-total').first(),
+        )
+        context['top_platform_label'] = top_platform['platform'] if top_platform else '-'
+        context['top_platform_total'] = top_platform['total'] if top_platform else 0
+        context['top_platform_helper'] = f"{context['top_platform_total']} exploits"
+        context['platform_distribution'] = safe_query(
+            [],
+            lambda: list(
+                Exploit.objects.exclude(platform='')
+                .values('platform')
+                .annotate(total=Count('id'))
+                .order_by('-total')[:8]
+            ),
+        )
+        context['type_distribution'] = safe_query(
+            [],
+            lambda: list(
+                Exploit.objects.exclude(type='')
+                .values('type')
+                .annotate(total=Count('id'))
+                .order_by('-total')[:8]
+            ),
+        )
+        cves_without_exploit = safe_query(
+            0,
+            lambda: ExternalAdvisory.objects.filter(source=ExternalAdvisory.Source.NVD).exclude(
+                cve_id__in=exploitable_cve_ids
+            ).count(),
+        )
+        context['cve_exploit_split'] = [
+            {'label': 'Con exploit', 'total': len(exploitable_cve_ids)},
+            {'label': 'Sin exploit', 'total': cves_without_exploit},
+        ]
+        context['findings_by_severity'] = safe_query(
+            [],
+            lambda: list(
+                Finding.objects.filter(
+                    organization=org,
+                    status=Finding.Status.OPEN,
+                    vulnerability_rule__cve__in=exploitable_cve_ids,
+                )
+                .values('severity')
+                .annotate(total=Count('id'))
+                .order_by('-total')
+            ),
+        )
+        findings_count_map = self._build_exploit_findings_count_map(org)
+        for item in context['object_list']:
+            item.findings_related_total = findings_count_map.get(item.id, 0)
+        context['active_filter_chips'] = self.get_active_filter_chips()
+        context['result_count'] = self.object_list.count()
+        context['current_querystring'] = self.get_querystring_without_page()
+        return context
+
+    def _build_exploit_findings_count_map(self, organization):
+        exploits = list(self.object_list)
+        if not exploits:
+            return {}
+        exploit_ids = [item.id for item in exploits]
+        link_rows = list(
+            CVEExploit.objects.filter(exploit_id__in=exploit_ids)
+            .select_related('cve')
+            .values('exploit_id', 'cve__cve_id')
+        )
+        cve_bucket: dict[int, set[str]] = {item.id: set() for item in exploits}
+        for row in link_rows:
+            cve_id = (row.get('cve__cve_id') or '').strip().upper()
+            if cve_id:
+                cve_bucket.setdefault(row['exploit_id'], set()).add(cve_id)
+        for item in exploits:
+            if item.cve:
+                cve_bucket.setdefault(item.id, set()).add(item.cve.strip().upper())
+
+        all_cves = sorted({cve for values in cve_bucket.values() for cve in values})
+        if not all_cves:
+            return {}
+        finding_counts = {
+            row['vulnerability_rule__cve']: row['total']
+            for row in Finding.objects.filter(
+                organization=organization,
+                vulnerability_rule__cve__in=all_cves,
+            )
+            .values('vulnerability_rule__cve')
+            .annotate(total=Count('id'))
+        }
+        result = {}
+        for exploit in exploits:
+            total = 0
+            for cve in cve_bucket.get(exploit.id, set()):
+                total += finding_counts.get(cve, 0)
+            result[exploit.id] = total
+        return result
+
+    def get_active_filter_chips(self):
+        labels = {
+            'cve_id': 'CVE',
+            'platform': 'Plataforma',
+            'type': 'Tipo',
+            'correlation': 'Correlación',
+            'has_findings': 'Findings',
+            'date_from': 'Desde',
+            'date_to': 'Hasta',
+            'query': 'Búsqueda',
+        }
+        chips = []
+        for key, label in labels.items():
+            value = self.request.GET.get(key, '').strip()
+            if value:
+                chips.append({'label': label, 'value': value})
+        return chips
+
+    def get_querystring_without_page(self):
+        params = self.request.GET.copy()
+        params.pop('page', None)
+        return params.urlencode()
+
+    def test_func(self):
+        if self.request.user.is_staff:
+            return True
+        membership = get_active_membership(self.request.user)
+        if not membership:
+            return False
+        return membership.role in {'owner', 'admin'}
+
+
+class ExploitDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailView):
+    model = Exploit
+    template_name = 'dashboard/exploit_detail.html'
+    slug_field = 'exploit_id'
+    slug_url_kwarg = 'exploit_id'
+
+    def get_queryset(self):
+        return Exploit.objects.prefetch_related('cve_links__cve__vulnerability_rules__finding').order_by('-created_at')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        cve_links = list(self.object.cve_links.select_related('cve').all())
+        cve_ids = [link.cve.cve_id for link in cve_links]
+        org = get_active_organization(self.request.user)
+        findings = safe_query(
+            [],
+            lambda: list(
+                Finding.objects.filter(
+                    organization=org,
+                    vulnerability_rule__cve__in=cve_ids,
+                )
+                .select_related('asset', 'vulnerability_rule')
+                .order_by('-created_at')[:30]
+            ),
+        )
+        asset_names = sorted({finding.asset.name for finding in findings if finding.asset})
+        context['cve_links'] = cve_links
+        context['findings_related'] = findings
+        context['assets_affected'] = asset_names
+        context['is_correlated'] = bool(cve_links)
         return context
 
     def test_func(self):

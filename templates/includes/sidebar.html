@@ -18,6 +18,7 @@
     <li><a class="nav-link {% if request.path|slice:':7' == '/scans/' %}active{% endif %}" href="/scans/"><i class="bi bi-activity"></i>Scans</a></li>
     <li><a class="nav-link {% if request.path|slice:':10' == '/findings/' %}active{% endif %}" href="/findings/"><i class="bi bi-exclamation-diamond"></i>Findings</a></li>
     <li><a class="nav-link {% if request.path|slice:':16' == '/knowledge-base/' %}active{% endif %}" href="/knowledge-base/"><i class="bi bi-shield-exclamation"></i>NVD CVEs</a></li>
+    <li><a class="nav-link {% if request.path|slice:':10' == '/exploits/' %}active{% endif %}" href="/exploits/"><i class="bi bi-lightning-charge-fill"></i>Exploit Intelligence</a></li>
     <li><a class="nav-link {% if request.path|slice:':29' == '/accounts/organization/team/' %}active{% endif %}" href="/accounts/organization/team/"><i class="bi bi-people"></i>Organization / Team</a></li>
   </ul>
 
