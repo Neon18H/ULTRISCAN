@@ -189,6 +189,32 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
         metadata = self._as_dict(structured_results.get('metadata'))
         redirects = self._as_list(structured_results.get('redirects'))
         web_basic_findings = self._as_list(structured_results.get('web_findings_basic'))
+        web_kpis = self._as_dict(structured_results.get('web_kpis'))
+        vulnerabilities_by_severity = self._as_dict(structured_results.get('vulnerabilities_by_severity'))
+        endpoints_by_source = self._as_dict(structured_results.get('endpoints_by_source'))
+        deduped_evidences = self._dedupe_evidences()
+        deduped_findings = self._dedupe_findings()
+        headers_analysis = {
+            'present': protections_present,
+            'absent': protections_absent,
+            'exposure': exposure_findings,
+            'informational': informational_findings,
+            'summary': {
+                'present': len(protections_present),
+                'absent': len(protections_absent),
+                'informational': len(informational_findings) + len(exposure_findings),
+            },
+        }
+        if not web_kpis:
+            web_kpis = {
+                'technologies_detected': len(technologies),
+                'endpoints_discovered': len(endpoints),
+                'vulnerabilities_detected': len(vulnerabilities),
+                'web_basic_findings': len(web_basic_findings),
+                'controls_present': headers_analysis['summary']['present'],
+                'controls_absent': headers_analysis['summary']['absent'],
+                'severity_aggregate': vulnerabilities_by_severity,
+            }
 
         return {
             'summary': summary,
@@ -201,17 +227,7 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             'executed_tools': executed_tools,
             'omitted_tools': omitted_tools,
             'dependencies': dependencies,
-            'headers_analysis': {
-                'present': protections_present,
-                'absent': protections_absent,
-                'exposure': exposure_findings,
-                'informational': informational_findings,
-                'summary': {
-                    'present': len(protections_present),
-                    'absent': len(protections_absent),
-                    'informational': len(informational_findings) + len(exposure_findings),
-                },
-            },
+            'headers_analysis': headers_analysis,
             'interpreted_headers': interpreted_headers,
             'technologies': technologies,
             'endpoints': endpoints,
@@ -222,8 +238,40 @@ class ScanDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             'metadata': metadata,
             'redirects': redirects,
             'web_basic_findings': web_basic_findings,
+            'web_kpis': web_kpis,
+            'vulnerabilities_by_severity': vulnerabilities_by_severity,
+            'endpoints_by_source': endpoints_by_source,
+            'deduped_evidences': deduped_evidences,
+            'deduped_findings': deduped_findings,
             'status_label': self._build_status_label(summary),
         }
+
+    def _dedupe_findings(self):
+        deduped = []
+        seen = set()
+        for finding in self.object.findings.all():
+            key = (finding.title.strip().lower(), finding.severity, finding.status)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(finding)
+        return deduped
+
+    def _dedupe_evidences(self):
+        deduped = []
+        seen = set()
+        for evidence in self.object.raw_evidences.all():
+            payload = evidence.payload if isinstance(evidence.payload, dict) else {}
+            key = (
+                evidence.source.strip().lower(),
+                evidence.host.strip().lower(),
+                str(payload.get('endpoints') or payload.get('vulnerabilities') or payload)[:200],
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(evidence)
+        return deduped
 
     def _build_status_label(self, summary):
         if self.object.status in {ScanExecution.Status.QUEUED, ScanExecution.Status.RUNNING}:

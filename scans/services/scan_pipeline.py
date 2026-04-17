@@ -294,6 +294,7 @@ class ScanPipelineService:
         endpoints: list[dict[str, Any]] = []
         vulnerabilities: list[dict[str, Any]] = []
         headers: dict[str, str] = {}
+        endpoints_by_source: dict[str, int] = {'gobuster': 0, 'ffuf': 0}
         interpreted_headers: list[dict[str, Any]] = []
         cms = ''
         fingerprint_detected = False
@@ -378,7 +379,7 @@ class ScanPipelineService:
         if _record_module('whatweb', whatweb, required=True):
             ww_payload = parse_whatweb_json(whatweb.stdout)
             plugins = self._extract_whatweb_plugins(ww_payload)
-            fingerprint = self._build_whatweb_fingerprint(ww_payload, target)
+            fingerprint = self._build_whatweb_fingerprint(ww_payload, target, headers)
             if isinstance(plugins, dict):
                 technologies.update(plugins.keys())
                 fingerprint_detected = bool(plugins)
@@ -444,7 +445,30 @@ class ScanPipelineService:
                         endpoints = parse_ffuf_output(enum_res.stdout)
                     else:
                         endpoints = parse_gobuster_json(enum_res.stdout)
+                    minimum_expected = int(os.environ.get('WEB_ENUM_MIN_ENDPOINTS', '2'))
+                    if (
+                        len(endpoints) < minimum_expected
+                        and tool_presence.get(fallback_enum_tool)
+                        and fallback_enum_tool != enum_tool
+                    ):
+                        warnings.append(
+                            f'{enum_tool} devolvió pocos endpoints ({len(endpoints)}); se ejecuta fallback con {fallback_enum_tool}.'
+                        )
+                        fallback_result = (
+                            self.run_ffuf(target, wordlist)
+                            if fallback_enum_tool == 'ffuf'
+                            else self.run_gobuster(target, wordlist)
+                        )
+                        if _record_module(fallback_enum_tool, fallback_result):
+                            fallback_endpoints = (
+                                parse_ffuf_output(fallback_result.stdout)
+                                if fallback_enum_tool == 'ffuf'
+                                else parse_gobuster_json(fallback_result.stdout)
+                            )
+                            endpoints.extend(fallback_endpoints)
+                    endpoints = self._enrich_endpoint_priority(endpoints)
                     endpoints = self._dedupe_endpoints(target, endpoints)
+                    endpoints_by_source = self._count_endpoints_by_source(endpoints)
                     RawEvidence.objects.create(
                         organization=scan.organization,
                         scan_execution=scan,
@@ -558,6 +582,7 @@ class ScanPipelineService:
                 )
 
         vulnerabilities = self._dedupe_vulnerabilities(vulnerabilities)
+        vulnerabilities_by_severity = self._count_vulnerabilities_by_severity(vulnerabilities)
 
         if not tools_executed:
             warnings.append('No hubo herramientas externas exitosas; se devuelve resultado parcial usando HTTP probe/headers.')
@@ -640,6 +665,16 @@ class ScanPipelineService:
                     metadata={'module': 'http_headers', **header_finding},
                 )
 
+        headers_analysis = self._group_interpreted_headers(interpreted_headers)
+        web_basic_findings = self._build_basic_web_findings(endpoints=endpoints, headers_analysis=headers_analysis)
+        web_kpis = self._build_web_kpis(
+            technologies=technologies,
+            endpoints=endpoints,
+            vulnerabilities=vulnerabilities,
+            headers_analysis=headers_analysis,
+            web_basic_findings=web_basic_findings,
+        )
+
         summary = {
             'scan_type': scan_type,
             'category': 'web',
@@ -654,6 +689,8 @@ class ScanPipelineService:
             'technologies_count': len(technologies),
             'endpoints_count': len(endpoints),
             'vulnerabilities_count': len(vulnerabilities),
+            'vulnerabilities_by_severity': vulnerabilities_by_severity,
+            'endpoints_by_source': endpoints_by_source,
             'interpreted_headers_count': len(interpreted_headers),
             'cms': cms,
             'target': target,
@@ -667,7 +704,6 @@ class ScanPipelineService:
         }
         http_status = probe_result.get('status_code')
         redirections = fingerprint.get('redirections') or []
-        web_basic_findings = self._build_basic_web_findings(endpoints=endpoints, headers_analysis=self._group_interpreted_headers(interpreted_headers))
         metadata = {
             'pipeline': 'web',
             'modules': modules,
@@ -681,6 +717,7 @@ class ScanPipelineService:
                 'technologies': sorted(technologies),
                 'endpoints': endpoints,
                 'web_findings_basic': web_basic_findings,
+                'web_kpis': web_kpis,
                 'vulnerabilities': vulnerabilities,
                 'headers': headers,
                 'interpreted_headers': interpreted_headers,
@@ -695,7 +732,9 @@ class ScanPipelineService:
                 'warnings': warnings,
                 'partial_result': bool(tools_skipped or warnings),
                 'fingerprint_detected': fingerprint_detected,
-                'headers_analysis': self._group_interpreted_headers(interpreted_headers),
+                'headers_analysis': headers_analysis,
+                'vulnerabilities_by_severity': vulnerabilities_by_severity,
+                'endpoints_by_source': endpoints_by_source,
             },
         }
         command_executed = '; '.join(
@@ -781,6 +820,9 @@ class ScanPipelineService:
                 '--no-color',
                 '-k',
                 '-q',
+                '-r',
+                '-s',
+                '200,204,301,302,307,308,401,403',
             ],
         )
 
@@ -808,15 +850,17 @@ class ScanPipelineService:
                 '-silent',
                 '-no-color',
                 '-c',
-                '8',
+                os.environ.get('NUCLEI_CONCURRENCY', '2'),
                 '-rl',
-                '30',
+                os.environ.get('NUCLEI_RATE_LIMIT', '8'),
                 '-bs',
-                '25',
+                os.environ.get('NUCLEI_BULK_SIZE', '10'),
                 '-timeout',
-                '8',
+                os.environ.get('NUCLEI_TIMEOUT', '8'),
                 '-retries',
-                '1',
+                os.environ.get('NUCLEI_RETRIES', '0'),
+                '-max-host-error',
+                os.environ.get('NUCLEI_MAX_HOST_ERRORS', '5'),
                 '-t',
                 str(templates_path),
             ],
@@ -967,24 +1011,29 @@ class ScanPipelineService:
 
     def _dedupe_endpoints(self, target: str, endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
         deduped: list[dict[str, Any]] = []
-        seen: set[tuple[str, Any]] = set()
+        seen: set[tuple[str, Any, str]] = set()
         for endpoint in endpoints:
             path = str(endpoint.get('path') or '').strip() or '/'
             if not path.startswith('/'):
                 path = f'/{path}'
             status = endpoint.get('status_code')
-            key = (path, status)
+            source = str(endpoint.get('source') or 'unknown')
+            key = (path, status, source)
             if key in seen:
                 continue
             seen.add(key)
+            redirect = endpoint.get('redirect') or ''
+            priority = self._endpoint_priority(path, status)
             deduped.append(
                 {
                     **endpoint,
                     'path': path,
                     'url': endpoint.get('url') or f'{target.rstrip("/")}{path}',
+                    'redirect': redirect,
+                    'priority': priority,
                 }
             )
-        return deduped
+        return sorted(deduped, key=lambda row: (-self._priority_rank(row.get('priority')), row.get('path', '/')))
 
     def _dedupe_vulnerabilities(self, vulnerabilities: list[dict[str, Any]]) -> list[dict[str, Any]]:
         deduped: list[dict[str, Any]] = []
@@ -1002,9 +1051,17 @@ class ScanPipelineService:
             deduped.append(vuln)
         return deduped
 
-    def _build_whatweb_fingerprint(self, payload: dict[str, Any], target: str) -> dict[str, Any]:
+    def _build_whatweb_fingerprint(self, payload: dict[str, Any], target: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
         plugins = self._extract_whatweb_plugins(payload)
         technologies = sorted(plugins.keys()) if isinstance(plugins, dict) else []
+        response_headers: dict[str, Any] = {}
+        uncommon_headers: dict[str, Any] = {}
+        for name, value in (headers or {}).items():
+            key = str(name).strip().lower()
+            if key in {'server', 'x-powered-by', 'content-type', 'strict-transport-security', 'x-frame-options'}:
+                response_headers[key] = value
+            elif key.startswith('x-') or key in {'content-security-policy', 'permissions-policy', 'referrer-policy'}:
+                uncommon_headers[key] = value
         return {
             'target': payload.get('target') or target,
             'ip': payload.get('ip') or '',
@@ -1013,8 +1070,69 @@ class ScanPipelineService:
             'server': self._extract_plugin_text(plugins.get('HTTPServer')) if isinstance(plugins, dict) else '',
             'x_powered_by': self._extract_plugin_text(plugins.get('X-Powered-By')) if isinstance(plugins, dict) else '',
             'plugins': plugins if isinstance(plugins, dict) else {},
+            'fingerprint_plugins': plugins if isinstance(plugins, dict) else {},
             'technologies': technologies,
+            'response_headers': response_headers,
+            'uncommon_headers': uncommon_headers,
             'redirections': payload.get('redirection') or payload.get('redirects') or [],
+        }
+
+    def _count_endpoints_by_source(self, endpoints: list[dict[str, Any]]) -> dict[str, int]:
+        totals: dict[str, int] = {'gobuster': 0, 'ffuf': 0}
+        for endpoint in endpoints:
+            source = str(endpoint.get('source') or 'unknown').lower()
+            totals[source] = totals.get(source, 0) + 1
+        return totals
+
+    def _count_vulnerabilities_by_severity(self, vulnerabilities: list[dict[str, Any]]) -> dict[str, int]:
+        totals = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
+        for vuln in vulnerabilities:
+            sev = str(vuln.get('severity') or 'medium').lower()
+            if sev not in totals:
+                sev = 'info'
+            totals[sev] += 1
+        return totals
+
+    def _endpoint_priority(self, path: str, status_code: Any) -> str:
+        path_lc = str(path).lower()
+        sensitive_tokens = ('admin', 'login', 'dashboard', 'api', 'config', 'backup', 'internal', 'debug', 'wp-admin')
+        sensitive = any(token in path_lc for token in sensitive_tokens)
+        if sensitive and status_code in {200, 401, 403}:
+            return 'high'
+        if status_code in {301, 302, 307, 308}:
+            return 'medium'
+        return 'low'
+
+    def _priority_rank(self, priority: Any) -> int:
+        ranks = {'high': 3, 'medium': 2, 'low': 1}
+        return ranks.get(str(priority).lower(), 0)
+
+    def _enrich_endpoint_priority(self, endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched = []
+        for endpoint in endpoints:
+            path = str(endpoint.get('path') or '/')
+            status_code = endpoint.get('status_code')
+            enriched.append({**endpoint, 'priority': self._endpoint_priority(path, status_code)})
+        return enriched
+
+    def _build_web_kpis(
+        self,
+        *,
+        technologies: set[str],
+        endpoints: list[dict[str, Any]],
+        vulnerabilities: list[dict[str, Any]],
+        headers_analysis: dict[str, Any],
+        web_basic_findings: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        vulnerabilities_by_severity = self._count_vulnerabilities_by_severity(vulnerabilities)
+        return {
+            'technologies_detected': len(technologies),
+            'endpoints_discovered': len(endpoints),
+            'vulnerabilities_detected': len(vulnerabilities),
+            'web_basic_findings': len(web_basic_findings),
+            'controls_present': len(headers_analysis.get('present') or []),
+            'controls_absent': len(headers_analysis.get('absent') or []),
+            'severity_aggregate': vulnerabilities_by_severity,
         }
 
     def _build_basic_web_findings(self, *, endpoints: list[dict[str, Any]], headers_analysis: dict[str, Any]) -> list[dict[str, Any]]:

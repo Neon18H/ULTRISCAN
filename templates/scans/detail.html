@@ -3,348 +3,129 @@
 <div class="page-header d-flex justify-content-between align-items-start mb-4">
   <div>
     <h2 class="mb-1">Scan #{{ object.id }}</h2>
-    <p class="text-muted mb-0">{{ object.asset.name }} · {{ object.profile.name }}</p>
+    <p class="text-muted mb-0">{{ object.asset.name }} · {{ object.profile.name }} · {{ object.asset.value }}</p>
   </div>
   <div class="d-flex align-items-center gap-2">
-    <a href="{% url 'scans-report-pdf' object.id %}" class="btn btn-sm btn-outline-primary">
+    <a href="{% url 'scans-report-pdf' object.id %}" class="btn btn-sm btn-primary">
       <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF
     </a>
-    <span class="badge status-badge status-{{ object.status }}">{{ object.get_status_display }}</span>
+    <span class="badge status-badge status-{{ object.status }}">{{ status_label|default:object.get_status_display }}</span>
   </div>
 </div>
 
 <div class="row g-3 mb-3">
-  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Tipo</div><div class="fw-semibold">{{ object.engine_metadata.requested_scan_type|default:'nmap_discovery' }}</div></div></div></div>
-  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Pipeline</div><div class="fw-semibold">{{ object.engine_metadata.pipeline|default:'infra' }}</div></div></div></div>
-  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Duración</div><div class="fw-semibold">{{ object.duration_seconds }}s</div></div></div></div>
-  <div class="col-lg-3"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Fecha</div><div class="fw-semibold">{{ object.created_at|date:'Y-m-d H:i' }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Tecnologías</div><div class="metric-value">{{ web_kpis.technologies_detected|default:technologies|length }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Endpoints</div><div class="metric-value">{{ web_kpis.endpoints_discovered|default:endpoints|length }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Vulnerabilidades</div><div class="metric-value">{{ web_kpis.vulnerabilities_detected|default:vulnerabilities|length }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Hallazgos web</div><div class="metric-value">{{ web_kpis.web_basic_findings|default:web_basic_findings|length }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Controles OK</div><div class="metric-value">{{ web_kpis.controls_present|default:headers_analysis.summary.present }}</div></div></div></div>
+  <div class="col-lg-2 col-md-4"><div class="card metric-card"><div class="card-body"><div class="small text-muted">Controles ausentes</div><div class="metric-value">{{ web_kpis.controls_absent|default:headers_analysis.summary.absent }}</div></div></div></div>
 </div>
 
 <div class="card metric-card mb-3">
   <div class="card-body">
-    <h5 class="mb-2">Metadata de ejecución</h5>
-    <div><strong>Estado renderizado:</strong> {{ status_label|default:object.get_status_display }}</div>
-    <div><strong>Tools:</strong>
-      {% if executed_tools %}
-        {{ executed_tools|join:', ' }}
-      {% elif available_tools %}
-        {{ available_tools|join:', ' }}
-      {% else %}
-        No disponible
-      {% endif %}
+    <h5 class="mb-3">Resumen ejecutivo del scan</h5>
+    <div class="row g-3 small">
+      <div class="col-lg-4"><strong>Tipo:</strong> {{ object.engine_metadata.requested_scan_type|default:'nmap_discovery' }}</div>
+      <div class="col-lg-4"><strong>Pipeline:</strong> {{ object.engine_metadata.pipeline|default:'infra' }}</div>
+      <div class="col-lg-4"><strong>Duración:</strong> {{ object.duration_seconds }}s</div>
+      <div class="col-lg-4"><strong>Estado HTTP:</strong> {{ structured_results.http_status|default:'N/A' }}</div>
+      <div class="col-lg-4"><strong>CMS:</strong> {{ cms|default:'No detectado' }}</div>
+      <div class="col-lg-4"><strong>Fecha:</strong> {{ object.created_at|date:'Y-m-d H:i' }}</div>
     </div>
-    {% if summary.partial_result %}
-    <div><strong>Resultado:</strong> <span class="badge text-bg-warning">Parcial</span></div>
-    {% endif %}
-    <div><strong>Command:</strong> <code>{{ object.command_executed|default:'N/A' }}</code></div>
-    {% if object.error_message %}<div class="alert alert-danger mt-3 mb-2">{{ object.error_message }}</div>{% endif %}
     {% if warnings %}
-      <div class="alert alert-warning mt-3 mb-2">
+      <div class="alert alert-warning mt-3 mb-0">
         <strong>Warnings técnicos</strong>
-        <ul class="mb-0 mt-2">
-          {% for warning in warnings %}
-            <li>{{ warning }}</li>
-          {% endfor %}
-        </ul>
+        <ul class="mb-0 mt-2">{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
       </div>
     {% endif %}
   </div>
 </div>
 
-<div class="card metric-card mb-3">
-  <div class="card-body">
-    <h5 class="mb-3">Resultados web enterprise</h5>
-    <div class="row g-3">
-      <div class="col-md-3"><div class="small text-muted">URL objetivo</div><div class="fw-semibold text-truncate">{{ structured_results.target|default:object.asset.value }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Estado HTTP</div><div class="fw-semibold">{{ structured_results.http_status|default:'N/A' }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">CMS</div><div class="fw-semibold">{{ cms|default:'No disponible' }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Tecnologías</div><div class="fw-semibold">{{ technologies|length|default:0 }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Endpoints</div><div class="fw-semibold">{{ endpoints|length|default:0 }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Vulnerabilidades</div><div class="fw-semibold">{{ vulnerabilities|length|default:0 }}</div></div>
-      <div class="col-md-3"><div class="small text-muted">Fingerprint</div><div class="fw-semibold">{% if fingerprint.plugins %}Detectado{% else %}No disponible{% endif %}</div></div>
-    </div>
-    {% if technologies %}
-      <hr>
-      <div class="small text-muted mb-2">Tecnologías detectadas</div>
-      <div class="d-flex flex-wrap gap-2">
-        {% for technology in technologies %}
-          <span class="badge rounded-pill text-bg-light border">{{ technology }}</span>
-        {% endfor %}
-      </div>
-    {% endif %}
-    {% if fingerprint %}
-      <hr>
-      <div class="row g-3">
-        <div class="col-md-6">
-          <h6 class="mb-2">Fingerprint web</h6>
-          <div class="small text-muted">Server</div><div class="fw-semibold">{{ fingerprint.server|default:'n/a' }}</div>
-          <div class="small text-muted mt-2">X-Powered-By</div><div class="fw-semibold">{{ fingerprint.x_powered_by|default:'n/a' }}</div>
-          <div class="small text-muted mt-2">IP</div><div class="fw-semibold">{{ fingerprint.ip|default:'n/a' }}</div>
-        </div>
-        <div class="col-md-6">
-          <h6 class="mb-2">Headers HTTP</h6>
-          <div class="small"><code>{% if http_headers %}{{ http_headers }}{% else %}Sin datos{% endif %}</code></div>
-        </div>
-      </div>
-    {% endif %}
-    {% if redirects %}
-      <hr>
-      <h6 class="mb-2">Redirecciones detectadas</h6>
-      <ul class="mb-0">
-        {% for redirect in redirects %}
-          <li><code>{{ redirect }}</code></li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-    {% if not structured_results %}
-      <p class="text-muted mt-3 mb-0">Aún no hay resultados estructurados.</p>
-    {% endif %}
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card metric-card h-100"><div class="card-body">
+      <h6 class="mb-3">Distribución por severidad</h6>
+      {% for level,count in vulnerabilities_by_severity.items %}
+        <div class="d-flex justify-content-between small"><span>{{ level|upper }}</span><span>{{ count }}</span></div>
+        <div class="progress mb-2" role="progressbar"><div class="progress-bar" style="width:{% if vulnerabilities|length %}{% widthratio count vulnerabilities|length 100 %}{% else %}0{% endif %}%"></div></div>
+      {% empty %}<p class="text-muted small mb-0">Sin datos.</p>{% endfor %}
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card metric-card h-100"><div class="card-body">
+      <h6 class="mb-3">Headers OK vs Warning</h6>
+      <div class="d-flex justify-content-between small"><span>OK</span><span>{{ headers_analysis.summary.present }}</span></div>
+      <div class="progress mb-2"><div class="progress-bar bg-success" style="width:{% if interpreted_headers|length %}{% widthratio headers_analysis.summary.present interpreted_headers|length 100 %}{% else %}0{% endif %}%"></div></div>
+      <div class="d-flex justify-content-between small"><span>Warning</span><span>{{ headers_analysis.summary.absent }}</span></div>
+      <div class="progress mb-2"><div class="progress-bar bg-warning" style="width:{% if interpreted_headers|length %}{% widthratio headers_analysis.summary.absent interpreted_headers|length 100 %}{% else %}0{% endif %}%"></div></div>
+      <div class="d-flex justify-content-between small"><span>Info/Exposición</span><span>{{ headers_analysis.summary.informational }}</span></div>
+      <div class="progress"><div class="progress-bar bg-info" style="width:{% if interpreted_headers|length %}{% widthratio headers_analysis.summary.informational interpreted_headers|length 100 %}{% else %}0{% endif %}%"></div></div>
+    </div></div>
   </div>
 </div>
 
-<div class="card metric-card mb-3">
-  <div class="card-body">
-    <h5 class="mb-3">Servicios detectados (infra/correlación)</h5>
-    <div class="table-responsive">
-      <table class="table table-enterprise align-middle mb-0">
-        <thead><tr><th>Host</th><th>Puerto</th><th>Servicio</th><th>Producto</th><th>Estado</th></tr></thead>
-        <tbody>
-          {% for service in object.service_findings.all %}
-          <tr>
-            <td>{{ service.host }}</td>
-            <td>{{ service.port }}/{{ service.protocol }}</td>
-            <td>{{ service.service|default:'-' }}</td>
-            <td>{{ service.product|default:'-' }}</td>
-            <td>{{ service.state }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="5" class="text-muted">Sin servicios detectados.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+<div class="card metric-card mb-3"><div class="card-body">
+  <h5 class="mb-3">Fingerprint web y tecnologías</h5>
+  <div class="row g-3">
+    <div class="col-lg-4"><div class="small text-muted">Servidor</div><div class="fw-semibold">{{ fingerprint.server|default:'n/a' }}</div></div>
+    <div class="col-lg-4"><div class="small text-muted">IP</div><div class="fw-semibold">{{ fingerprint.ip|default:'n/a' }}</div></div>
+    <div class="col-lg-4"><div class="small text-muted">País</div><div class="fw-semibold">{{ fingerprint.country|default:'n/a' }}</div></div>
   </div>
-</div>
+  {% if technologies %}
+    <div class="mt-3 d-flex flex-wrap gap-2">{% for technology in technologies %}<span class="badge rounded-pill text-bg-light border">{{ technology }}</span>{% endfor %}</div>
+  {% endif %}
+</div></div>
 
 {% if endpoints %}
-<div class="card metric-card mb-3">
-  <div class="card-body">
-    <h5 class="mb-3">Endpoints descubiertos</h5>
-    <div class="table-responsive">
-      <table class="table table-enterprise align-middle mb-0">
-        <thead><tr><th>Path</th><th>Status</th><th>Fuente</th><th>URL</th></tr></thead>
-        <tbody>
-          {% for endpoint in endpoints %}
-          <tr>
-            <td><code>{{ endpoint.path }}</code></td>
-            <td><span class="badge text-bg-light border">{{ endpoint.status_code|default:'n/a' }}</span></td>
-            <td>{{ endpoint.source|default:'n/a' }}</td>
-            <td class="text-truncate" style="max-width:380px;"><code>{{ endpoint.url|default:'-' }}</code></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+<div class="card metric-card mb-3"><div class="card-body">
+  <h5 class="mb-3">Endpoints encontrados</h5>
+  <div class="table-responsive">
+    <table class="table table-enterprise align-middle mb-0">
+      <thead><tr><th>Ruta</th><th>Status</th><th>Redirect</th><th>Fuente</th><th>Prioridad</th><th>Longitud</th></tr></thead>
+      <tbody>{% for endpoint in endpoints %}
+        <tr>
+          <td><code>{{ endpoint.path }}</code></td>
+          <td><span class="badge text-bg-light border">{{ endpoint.status_code|default:'n/a' }}</span></td>
+          <td><code>{{ endpoint.redirect|default:'-' }}</code></td>
+          <td>{{ endpoint.source|default:'n/a' }}</td>
+          <td><span class="badge {% if endpoint.priority == 'high' %}text-bg-danger{% elif endpoint.priority == 'medium' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">{{ endpoint.priority|default:'low'|upper }}</span></td>
+          <td>{{ endpoint.length|default:'-' }}</td>
+        </tr>
+      {% endfor %}</tbody>
+    </table>
   </div>
-</div>
+</div></div>
 {% endif %}
 
-{% if web_basic_findings %}
-<div class="card metric-card mb-3">
-  <div class="card-body">
-    <h5 class="mb-3">Hallazgos web básicos</h5>
-    <ul class="list-group list-group-flush">
-      {% for finding in web_basic_findings %}
-      <li class="list-group-item px-0 d-flex justify-content-between align-items-start">
-        <div>
-          <div class="fw-semibold">{{ finding.title }}</div>
-          <div class="small text-muted">{{ finding.evidence }}</div>
-        </div>
-        <span class="badge text-bg-secondary">{{ finding.severity|upper }}</span>
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
-</div>
-{% endif %}
-
-<div class="card metric-card mb-3">
-  <div class="card-body">
-    <h5 class="mb-3">Resultados por módulo</h5>
-    {% if tools %}
-      <div class="mb-2"><strong>Disponibles:</strong> {% if available_tools %}{{ available_tools|join:', ' }}{% else %}Sin datos{% endif %}</div>
-      <div class="mb-2"><strong>Ejecutadas:</strong> {% if executed_tools %}{{ executed_tools|join:', ' }}{% else %}Sin datos{% endif %}</div>
-    {% else %}
-      <div class="mb-2"><strong>Disponibles:</strong> Sin datos</div>
-      <div class="mb-2"><strong>Ejecutadas:</strong> Sin datos</div>
-    {% endif %}
-    {% if omitted_tools %}
-      <div class="mb-3"><strong>Omitidas:</strong>
-        {% for skipped in omitted_tools %}
-          <span class="badge text-bg-secondary">{{ skipped.tool }} · {{ skipped.reason }}</span>
-        {% endfor %}
-      </div>
-    {% endif %}
-    {% if dependencies %}
-      <div class="mb-3">
-        <strong>Dependencias detectadas:</strong>
-        <ul class="mb-0 mt-2">
-          {% for tool_name, check in dependencies.items %}
-            <li>
-              {{ tool_name }}:
-              {% if check.available %}
-                <span class="badge text-bg-success">disponible</span>
-              {% else %}
-                <span class="badge text-bg-warning">faltante</span>
-              {% endif %}
-              {% if check.required %}
-                <span class="badge text-bg-info">requerido</span>
-              {% else %}
-                <span class="badge text-bg-secondary">opcional</span>
-              {% endif %}
-            </li>
-          {% endfor %}
-        </ul>
-      </div>
-    {% endif %}
-    {% if not modules %}
-      <div class="alert alert-light border">Aún no hay resultados estructurados por módulo.</div>
-    {% endif %}
-    <ul class="list-group list-group-flush">
-      {% for module, result in modules.items %}
-      <li class="list-group-item px-0">
-        <div class="d-flex justify-content-between align-items-center">
-          <div class="fw-semibold">{{ module }}</div>
-          {% if result.state == 'ok' %}
-            <span class="badge text-bg-success">ok</span>
-          {% elif result.state == 'skipped' %}
-            <span class="badge text-bg-secondary">skipped</span>
-          {% elif result.state == 'warning' %}
-            <span class="badge text-bg-warning">warning</span>
-          {% else %}
-            <span class="badge text-bg-danger">failed</span>
-          {% endif %}
-        </div>
-        <div class="small text-muted mt-1">rc={{ result.return_code|default:'-' }} · <code>{{ result.command|default:'-' }}</code></div>
-        {% if result.stderr_excerpt %}
-          <div class="small text-danger mt-1"><strong>stderr:</strong> {{ result.stderr_excerpt }}</div>
-        {% endif %}
-        {% if result.stdout_excerpt %}
-          <div class="small text-muted mt-1"><strong>stdout:</strong> {{ result.stdout_excerpt }}</div>
-        {% endif %}
-      </li>
-      {% empty %}
-      <li class="list-group-item px-0 text-muted">No hay módulos registrados.</li>
-      {% endfor %}
-    </ul>
-  </div>
-</div>
-
-{% if interpreted_headers %}
-<div class="card metric-card mb-3">
-  <div class="card-body">
-    <h5 class="mb-3">Interpretación de headers HTTP</h5>
-    <div class="alert alert-light border mb-3">
-      <div class="d-flex flex-wrap gap-3">
-        <span><strong>{{ headers_analysis.summary.present|default:0 }}</strong> controles presentes</span>
-        <span><strong>{{ headers_analysis.summary.absent|default:0 }}</strong> controles ausentes</span>
-        <span><strong>{{ headers_analysis.summary.informational|default:0 }}</strong> hallazgos informativos</span>
-      </div>
-    </div>
-    {% if headers_analysis.present %}
-      <h6 class="text-success">Protecciones presentes</h6>
-      <ul class="list-group list-group-flush mb-3">
-        {% for item in headers_analysis.present %}
-        <li class="list-group-item px-0">
-          <div class="fw-semibold">{{ item.header }}</div>
-          <div class="small text-muted">{{ item.message }}</div>
-        </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-    {% if headers_analysis.absent %}
-      <h6 class="text-warning">Protecciones ausentes</h6>
-      <ul class="list-group list-group-flush mb-3">
-        {% for item in headers_analysis.absent %}
-        <li class="list-group-item px-0">
-          <div class="fw-semibold">{{ item.header }}</div>
-          <div class="small text-muted">{{ item.message }}</div>
-        </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-    {% if headers_analysis.exposure %}
-      <h6 class="text-danger">Exposición tecnológica</h6>
-      <ul class="list-group list-group-flush mb-3">
-        {% for item in headers_analysis.exposure %}
-        <li class="list-group-item px-0">
-          <div class="fw-semibold">{{ item.header }}</div>
-          <div class="small text-muted">{{ item.message }}</div>
-        </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-    {% if headers_analysis.informational %}
-      <h6 class="text-info">Observaciones informativas</h6>
-      <ul class="list-group list-group-flush mb-3">
-        {% for item in headers_analysis.informational %}
-        <li class="list-group-item px-0">
-          <div class="fw-semibold">{{ item.header }}</div>
-          <div class="small text-muted">{{ item.message }}</div>
-        </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-    <h6 class="mt-2">Detalle técnico</h6>
-    <ul class="list-group list-group-flush">
-      {% for item in interpreted_headers %}
-      <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-        <div>
-          <div class="fw-semibold">{{ item.header }}</div>
-          <div class="small text-muted">{{ item.title }} · {{ item.message }}</div>
-        </div>
-        {% if item.status == 'OK' %}
-          <span class="badge text-bg-success">OK</span>
-        {% elif item.status == 'WARNING' %}
-          <span class="badge text-bg-warning">WARNING</span>
-        {% else %}
-          <span class="badge text-bg-info">INFO</span>
-        {% endif %}
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
-</div>
+{% if vulnerabilities %}
+<div class="card metric-card mb-3"><div class="card-body">
+  <h5 class="mb-3">Vulnerabilidades detectadas</h5>
+  <ul class="list-group list-group-flush">{% for vuln in vulnerabilities %}
+    <li class="list-group-item px-0 d-flex justify-content-between">
+      <div><div class="fw-semibold">{{ vuln.name }}</div><div class="small text-muted">{{ vuln.description|default:'Sin descripción' }}</div></div>
+      <span class="badge {% if vuln.severity == 'critical' %}text-bg-danger{% elif vuln.severity == 'high' %}text-bg-warning{% elif vuln.severity == 'medium' %}text-bg-secondary{% else %}text-bg-info{% endif %}">{{ vuln.severity|upper }}</span>
+    </li>
+  {% endfor %}</ul>
+</div></div>
 {% endif %}
 
 <div class="row g-3">
-  <div class="col-lg-6">
-    <div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Evidencias</h5>
-      <ul class="list-group list-group-flush">
-        {% for evidence in object.raw_evidences.all %}
-          <li class="list-group-item px-0">
-            <div class="fw-semibold">{{ evidence.source|upper }} · {{ evidence.host }}</div>
-            <div class="small text-muted">{{ evidence.created_at|date:'Y-m-d H:i' }}</div>
-          </li>
-        {% empty %}
-          <li class="list-group-item px-0 text-muted">No hay evidencias almacenadas.</li>
-        {% endfor %}
-      </ul>
-    </div></div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Findings</h5>
-      <ul class="list-group list-group-flush">
-        {% for finding in object.findings.all %}
-          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-            <a href="{% url 'findings-detail' finding.id %}" class="text-decoration-none">{{ finding.title }}</a>
-            {% include 'includes/severity_badge.html' with severity=finding.severity %}
-          </li>
-        {% empty %}
-          <li class="list-group-item px-0 text-muted">No se generaron findings.</li>
-        {% endfor %}
-      </ul>
-    </div></div>
-  </div>
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Herramientas ejecutadas/omitidas</h5>
+    <div class="small mb-2"><strong>Ejecutadas:</strong> {{ executed_tools|join:', '|default:'N/A' }}</div>
+    <div class="small mb-2"><strong>Disponibles:</strong> {{ available_tools|join:', '|default:'N/A' }}</div>
+    {% if omitted_tools %}<div class="small"><strong>Omitidas:</strong> {% for skipped in omitted_tools %}<span class="badge text-bg-secondary">{{ skipped.tool }} · {{ skipped.reason }}</span> {% endfor %}</div>{% endif %}
+  </div></div></div>
+  <div class="col-lg-6"><div class="card metric-card h-100"><div class="card-body"><h5 class="mb-3">Evidencias (deduplicadas)</h5>
+    <ul class="list-group list-group-flush">{% for evidence in deduped_evidences %}
+      <li class="list-group-item px-0"><div class="fw-semibold">{{ evidence.source|upper }} · {{ evidence.host }}</div><div class="small text-muted">{{ evidence.created_at|date:'Y-m-d H:i' }}</div></li>
+    {% empty %}<li class="list-group-item px-0 text-muted">No hay evidencias.</li>{% endfor %}</ul>
+  </div></div></div>
 </div>
+
+<div class="card metric-card mt-3"><div class="card-body"><h5 class="mb-3">Findings deduplicados</h5>
+  <ul class="list-group list-group-flush">{% for finding in deduped_findings %}
+    <li class="list-group-item px-0 d-flex justify-content-between align-items-center"><a href="{% url 'findings-detail' finding.id %}" class="text-decoration-none">{{ finding.title }}</a>{% include 'includes/severity_badge.html' with severity=finding.severity %}</li>
+  {% empty %}<li class="list-group-item px-0 text-muted">No se generaron findings.</li>{% endfor %}</ul>
+</div></div>
 {% endblock %}
