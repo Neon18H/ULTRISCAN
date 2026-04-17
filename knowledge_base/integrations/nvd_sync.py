@@ -18,6 +18,7 @@ from knowledge_base.models import (
     ExternalAdvisoryReference,
     ExternalAdvisoryWeakness,
 )
+from knowledge_base.integrations.exploitdb_sync import sync_exploit_links
 
 logger = logging.getLogger(__name__)
 
@@ -591,6 +592,7 @@ def run_sync_job(
     processed_this_run = 0
     processed_pages = int(job.processed_pages or 0)
     stop_requested = False
+    synced_cve_ids: set[str] = set()
 
     try:
         for page in client.iter_cve_pages(
@@ -618,6 +620,7 @@ def run_sync_job(
                 fetched_count += 1
                 page_fetched += 1
                 processed_this_run += 1
+                synced_cve_ids.add(cve_id)
                 try:
                     exists_before = ExternalAdvisory.objects.filter(cve_id=cve_id).exists()
                     cvss_data = _extract_cvss(cve)
@@ -730,6 +733,18 @@ def run_sync_job(
         job.finished_at = timezone.now()
         job.last_successful_sync_at = job.finished_at
         job.error_message = '; '.join(error_messages[:10])
+        exploit_link_stats = sync_exploit_links(cve_ids=synced_cve_ids)
+        logger.info(
+            (
+                'NVD post-sync exploit correlation job_id=%s cve_candidates=%s '
+                'matched_nvd_cves=%s linked=%s removed=%s'
+            ),
+            job.id,
+            exploit_link_stats['relation_candidates'],
+            exploit_link_stats['matched_cves_in_nvd'],
+            exploit_link_stats['linked_relations'],
+            exploit_link_stats['removed_relations'],
+        )
     except Exception as exc:  # pragma: no cover
         job.status = AdvisorySyncJob.Status.FAILED
         job.finished_at = timezone.now()
