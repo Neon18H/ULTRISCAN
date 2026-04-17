@@ -222,3 +222,28 @@ Opciones útiles:
 - `sync_nvd_recent --hours 24`
 
 Todos estos comandos hacen **upsert** (sin duplicados por `cve_id`) y registran trazabilidad de ejecución en `AdvisorySyncJob`.
+
+## AI Enrichment con OpenRouter (post-correlación)
+
+Vulnsight incorpora una capa opcional de enriquecimiento IA para findings **después** de parsing técnico, correlación base, correlación CVE y correlación de exploits.
+
+### Variables de entorno
+- `OPENROUTER_API_KEY`
+- `OPENROUTER_BASE_URL` (default: `https://openrouter.ai/api/v1`)
+- `OPENROUTER_MODEL`
+- `OPENROUTER_TIMEOUT` (default: `45`)
+
+Si `OPENROUTER_API_KEY` o `OPENROUTER_MODEL` no están configurados, la ejecución continúa sin bloquear pipeline.
+
+### Reglas de seguridad de la capa IA
+- No inventar vulnerabilidades.
+- No inventar CVEs.
+- No inventar exploits.
+- Marcar `insufficient_evidence=true` si la evidencia no alcanza.
+- Priorización explícita cuando existe exploit público correlacionado por backend.
+
+### Persistencia
+El resultado estructurado JSON se guarda en `Finding.ai_enrichment` y campos derivados:
+- `ai_title`, `ai_summary`, `ai_impact`, `ai_remediation`
+- `ai_priority_reason`, `ai_confidence`, `ai_tags`
+- `ai_owasp_category`, `ai_cwe`

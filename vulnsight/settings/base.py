@@ -129,3 +129,8 @@ EXPLOITDB_CSV_URL = env(
     'EXPLOITDB_CSV_URL',
     default='https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv',
 )
+
+OPENROUTER_API_KEY = env('OPENROUTER_API_KEY', default='')
+OPENROUTER_BASE_URL = env('OPENROUTER_BASE_URL', default='https://openrouter.ai/api/v1')
+OPENROUTER_MODEL = env('OPENROUTER_MODEL', default='')
+OPENROUTER_TIMEOUT = env.int('OPENROUTER_TIMEOUT', default=45)

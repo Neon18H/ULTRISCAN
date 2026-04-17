@@ -527,6 +527,7 @@ class FindingDetailView(LoginRequiredMixin, TenantQuerysetMixin, DetailView):
             },
             lambda: self._build_exploit_context(context['nvd_correlation']),
         )
+        context['ai_context'] = self.object.ai_enrichment if isinstance(self.object.ai_enrichment, dict) else {}
         return context
 
 

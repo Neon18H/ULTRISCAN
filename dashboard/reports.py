@@ -149,10 +149,18 @@ def build_executive_summary_pdf(*, organization, findings, assets, scans, genera
 
     pdf.add_spacer(20)
     pdf.add_heading('Resumen ejecutivo', level=2)
-    pdf.add_paragraph(
-        'UltriScan consolida los hallazgos de la superficie de ataque y prioriza la remediacion de riesgos criticos. '
-        'Este reporte presenta un panorama para toma de decisiones con enfoque en reduccion de exposicion.'
-    )
+    ai_executive_inputs = [
+        finding.ai_summary.strip()
+        for finding in findings.order_by('-severity', '-created_at')[:10]
+        if finding.ai_summary
+    ]
+    if ai_executive_inputs:
+        pdf.add_paragraph(ai_executive_inputs[0][:420])
+    else:
+        pdf.add_paragraph(
+            'UltriScan consolida los hallazgos de la superficie de ataque y prioriza la remediacion de riesgos criticos. '
+            'Este reporte presenta un panorama para toma de decisiones con enfoque en reduccion de exposicion.'
+        )
 
     severity_totals = {level: findings.filter(severity=level).count() for level in ['critical', 'high', 'medium', 'low', 'info']}
     pdf.add_spacer(12)
@@ -176,9 +184,14 @@ def build_executive_summary_pdf(*, organization, findings, assets, scans, genera
 
     pdf.add_spacer(10)
     pdf.add_heading('Conclusiones y recomendaciones', level=2)
-    pdf.add_paragraph('1) Atender findings Critical/High en ventanas maximas de 7 dias con validacion de cierre.')
-    pdf.add_paragraph('2) Reducir servicios expuestos innecesarios y fortalecer hardening de activos internet-facing.')
-    pdf.add_paragraph('3) Ejecutar escaneos recurrentes y seguimiento de SLA de remediacion por severidad.')
+    ai_recommendations = [finding.ai_remediation for finding in findings.order_by('-severity', '-created_at')[:5] if finding.ai_remediation]
+    if ai_recommendations:
+        for idx, recommendation in enumerate(ai_recommendations[:3], start=1):
+            pdf.add_paragraph(f'{idx}) {recommendation[:420]}')
+    else:
+        pdf.add_paragraph('1) Atender findings Critical/High en ventanas maximas de 7 dias con validacion de cierre.')
+        pdf.add_paragraph('2) Reducir servicios expuestos innecesarios y fortalecer hardening de activos internet-facing.')
+        pdf.add_paragraph('3) Ejecutar escaneos recurrentes y seguimiento de SLA de remediacion por severidad.')
 
     filename = f"ultriscan_executive_summary_{organization.slug}_{timestamp.strftime('%Y%m%d_%H%M')}.pdf"
     response = HttpResponse(pdf.render(), content_type='application/pdf')
@@ -213,15 +226,22 @@ def build_technical_findings_pdf(*, organization, findings, generated_by, applie
         if finding.service_finding:
             service_port = f"{finding.service_finding.service or 'n/a'}:{finding.service_finding.port or '-'}"
 
-        pdf.add_line(f"{finding.title}", size=11, color=(0.06, 0.23, 0.47))
+        pdf.add_line(f"{finding.ai_title or finding.title}", size=11, color=(0.06, 0.23, 0.47))
         pdf.add_paragraph(
             f"Severidad: {finding.get_severity_display()} | Estado: {finding.get_status_display()} | "
             f"Confidence: {finding.get_confidence_display()} | Activo: {finding.asset.name if finding.asset else 'No asociado'} | "
             f"Servicio/Puerto: {service_port}",
             width=102,
         )
-        pdf.add_paragraph(f"Evidencia: {(finding.description or 'Sin evidencia')[:420]}", width=102)
-        pdf.add_paragraph(f"Remediacion: {(finding.remediation or 'Sin remediacion definida')[:420]}", width=102)
+        pdf.add_paragraph(f"Evidencia: {(finding.ai_summary or finding.description or 'Sin evidencia')[:420]}", width=102)
+        pdf.add_paragraph(f"Impacto: {(finding.ai_impact or 'Sin impacto enriquecido')[:420]}", width=102)
+        pdf.add_paragraph(f"Priorizacion: {(finding.ai_priority_reason or 'Sin razonamiento IA')[:420]}", width=102)
+        pdf.add_paragraph(f"Remediacion: {(finding.ai_remediation or finding.remediation or 'Sin remediacion definida')[:420]}", width=102)
+        if finding.ai_owasp_category or finding.ai_cwe:
+            pdf.add_paragraph(
+                f"OWASP/CWE: {finding.ai_owasp_category or '-'} / {finding.ai_cwe or '-'}",
+                width=102,
+            )
         pdf.add_paragraph(f"Referencia: {finding.reference or 'Sin referencia'}", width=102)
         pdf.add_spacer(10)
 

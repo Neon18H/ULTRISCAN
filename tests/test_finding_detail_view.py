@@ -60,6 +60,7 @@ class FindingDetailViewTests(TestCase):
             response,
             'Este finding no tiene contexto de correlación detallado disponible todavía.',
         )
+        self.assertContains(response, 'Aún no hay enriquecimiento IA para este finding.')
 
 
     def test_detail_view_renders_exploit_section_when_cve_has_public_exploit(self):
@@ -122,3 +123,35 @@ class FindingDetailViewTests(TestCase):
         self.assertContains(response, 'Exploit disponible')
         self.assertContains(response, 'EDB-4242')
         self.assertContains(response, 'Exploitable')
+
+    def test_detail_view_renders_ai_enrichment_section(self):
+        finding = Finding.objects.create(
+            organization=self.organization,
+            scan_execution=self.scan,
+            asset=self.asset,
+            title='Open SSH',
+            description='desc',
+            remediation='',
+            severity=Finding.Severity.MEDIUM,
+            confidence=Finding.Confidence.MEDIUM,
+            ai_summary='Resumen por IA',
+            ai_priority_reason='Tiene exploit público',
+            ai_impact='Impacto por IA',
+            ai_remediation='Acción por IA',
+            ai_owasp_category='A05',
+            ai_cwe='CWE-200',
+            ai_enrichment={
+                'insufficient_evidence': False,
+                'exploit_context': 'Public exploit available',
+                'confidence': 'medium',
+            },
+            correlation_trace={},
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('findings-detail', args=[finding.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Enriquecimiento IA (no fuente primaria)')
+        self.assertContains(response, 'Resumen por IA')
+        self.assertContains(response, 'Tiene exploit público')
