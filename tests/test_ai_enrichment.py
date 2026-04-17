@@ -108,6 +108,9 @@ class AIFindingEnrichmentServiceTests(TestCase):
         service = AIFindingEnrichmentService()
         total = service.enrich_findings([self.finding])
         self.assertEqual(total, 0)
+        self.finding.refresh_from_db()
+        self.assertEqual(self.finding.ai_enrichment.get('status'), 'skipped')
+        self.assertIn('OpenRouter no configurado', self.finding.ai_enrichment.get('status_message', ''))
 
     @override_settings(
         OPENROUTER_API_KEY='test-key',
@@ -139,3 +142,21 @@ class AIFindingEnrichmentServiceTests(TestCase):
         self.assertEqual(self.finding.ai_owasp_category, 'A06')
         self.assertEqual(self.finding.ai_cwe, 'CWE-79')
         self.assertEqual(self.finding.ai_enrichment.get('insufficient_evidence'), False)
+        self.assertEqual(self.finding.ai_enrichment.get('status'), 'success')
+
+    @override_settings(
+        OPENROUTER_API_KEY='test-key',
+        OPENROUTER_MODEL='openai/gpt-4o-mini',
+        OPENROUTER_BASE_URL='https://openrouter.ai/api/v1',
+    )
+    @patch('integrations.openrouter_client.requests.post')
+    def test_marks_error_status_when_openrouter_call_fails(self, mocked_post):
+        mocked_post.side_effect = RuntimeError('network failure')
+
+        service = AIFindingEnrichmentService()
+        total = service.enrich_findings([self.finding])
+
+        self.assertEqual(total, 0)
+        self.finding.refresh_from_db()
+        self.assertEqual(self.finding.ai_enrichment.get('status'), 'error')
+        self.assertEqual(self.finding.ai_enrichment.get('status_message'), 'Error al generar enriquecimiento IA')

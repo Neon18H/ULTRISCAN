@@ -21,7 +21,15 @@
 
     <div class="surface-card p-3 p-xl-4 mb-3 border border-primary-subtle">
       {% include 'includes/section_header.html' with eyebrow='AI enrichment' title='Enriquecimiento IA (no fuente primaria)' %}
-      {% if object.ai_enrichment %}
+      {% if ai_enrichment_status == 'error' %}
+      <div class="alert alert-danger border mb-0">
+        <i class="bi bi-exclamation-octagon me-1"></i>{{ ai_enrichment_status_message|default:'Error al generar enriquecimiento IA.' }}
+      </div>
+      {% elif ai_enrichment_status == 'skipped' %}
+      <div class="alert alert-secondary border mb-0">
+        <i class="bi bi-info-circle me-1"></i>{{ ai_enrichment_status_message|default:'OpenRouter no configurado. Enriquecimiento IA omitido.' }}
+      </div>
+      {% elif object.ai_enrichment %}
       <div class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle mb-2">Capa IA</div>
       <p class="mb-2"><strong>Resumen IA:</strong> {{ object.ai_summary|default:ai_context.evidence_summary|default:'Sin resumen IA.' }}</p>
       <p class="mb-2"><strong>Impacto:</strong> {{ object.ai_impact|default:ai_context.impact_summary|default:'Sin impacto enriquecido.' }}</p>

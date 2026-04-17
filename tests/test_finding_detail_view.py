@@ -155,3 +155,49 @@ class FindingDetailViewTests(TestCase):
         self.assertContains(response, 'Enriquecimiento IA (no fuente primaria)')
         self.assertContains(response, 'Resumen por IA')
         self.assertContains(response, 'Tiene exploit público')
+
+    def test_detail_view_renders_ai_skipped_message(self):
+        finding = Finding.objects.create(
+            organization=self.organization,
+            scan_execution=self.scan,
+            asset=self.asset,
+            title='Open SSH',
+            description='desc',
+            remediation='',
+            severity=Finding.Severity.MEDIUM,
+            confidence=Finding.Confidence.MEDIUM,
+            ai_enrichment={
+                'status': 'skipped',
+                'status_message': 'OpenRouter no configurado. Enriquecimiento IA omitido.',
+            },
+            correlation_trace={},
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('findings-detail', args=[finding.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'OpenRouter no configurado. Enriquecimiento IA omitido.')
+
+    def test_detail_view_renders_ai_error_message(self):
+        finding = Finding.objects.create(
+            organization=self.organization,
+            scan_execution=self.scan,
+            asset=self.asset,
+            title='Open SSH',
+            description='desc',
+            remediation='',
+            severity=Finding.Severity.MEDIUM,
+            confidence=Finding.Confidence.MEDIUM,
+            ai_enrichment={
+                'status': 'error',
+                'status_message': 'Error al generar enriquecimiento IA',
+            },
+            correlation_trace={},
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('findings-detail', args=[finding.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Error al generar enriquecimiento IA')
