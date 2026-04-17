@@ -10,6 +10,33 @@
 
 <div class="card metric-card">
   <div class="card-body">
+    <style>
+      .appsec-shell{background:linear-gradient(180deg,#f8fbff,#fff);border:1px solid #d9e4f4;border-radius:18px;padding:1rem 1rem 1.25rem}
+      .appsec-toolbar{display:flex;flex-wrap:wrap;gap:.55rem;align-items:center;justify-content:space-between;margin-bottom:.85rem}
+      .appsec-toolbar .btn{border-radius:999px}
+      .appsec-toolbar .btn i{font-size:.85rem}
+      .appsec-category{border:1px solid #e2e8f0;border-radius:14px;background:#fff;margin-bottom:.8rem;overflow:hidden;transition:all .2s ease}
+      .appsec-category:hover{border-color:#c5d7ee;box-shadow:0 8px 20px rgba(15,23,42,.06)}
+      .appsec-category summary{list-style:none;cursor:pointer;padding:.85rem 1rem;display:flex;align-items:center;justify-content:space-between;font-weight:600}
+      .appsec-category summary::-webkit-details-marker{display:none}
+      .appsec-category .summary-left{display:flex;align-items:center;gap:.6rem}
+      .appsec-category .summary-icon{height:32px;width:32px;border-radius:9px;display:grid;place-items:center;background:#e8f0fe;color:#0f3b79}
+      .appsec-module-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:.75rem;padding:0 1rem 1rem}
+      .appsec-module-card{border:1px solid #e7eef8;border-radius:12px;padding:.75rem .8rem;background:#fcfdff;transition:all .2s ease}
+      .appsec-module-card:hover{transform:translateY(-1px);box-shadow:0 10px 16px rgba(15,23,42,.05);border-color:#c4d9f4}
+      .appsec-module-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem;margin-bottom:.35rem}
+      .appsec-module-title{font-weight:600;font-size:.94rem;line-height:1.2}
+      .appsec-module-desc{font-size:.81rem;color:#64748b;margin-bottom:.45rem;line-height:1.35}
+      .appsec-module-meta{font-size:.76rem;color:#475569;line-height:1.35}
+      .appsec-severity{font-size:.68rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:.3rem .55rem;border-radius:999px}
+      .appsec-severity-critical{background:#fef3f2;color:#b42318}
+      .appsec-severity-high{background:#fff7ed;color:#c2410c}
+      .appsec-severity-medium{background:#fffbeb;color:#b45309}
+      .appsec-tooltip{color:#475569;font-size:.88rem}
+      .appsec-tooltip:hover{color:#0f3b79}
+      .appsec-switch .form-check-input{width:2.7rem;height:1.35rem;cursor:pointer}
+      .appsec-module-card .form-check{margin:0}
+    </style>
     <form method="post" class="row g-3">
       {% csrf_token %}
       <div class="col-md-6">
@@ -92,8 +119,52 @@
       </div>
       <div class="col-12">
         <label class="form-label d-block">{{ form.web_appsec_modules.label }}</label>
-        <div class="border rounded p-3">
-          {{ form.web_appsec_modules }}
+        <div class="appsec-shell">
+          <div class="appsec-toolbar">
+            <div class="d-flex flex-wrap gap-2">
+              <button class="btn btn-sm btn-outline-primary" type="button" data-appsec-action="select-all"><i class="bi bi-check2-square me-1"></i>Seleccionar todo</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-appsec-action="clear-all"><i class="bi bi-eraser me-1"></i>Limpiar</button>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+              <button class="btn btn-sm btn-primary" type="button" data-appsec-preset="quick"><i class="bi bi-lightning-charge me-1"></i>Quick Scan</button>
+              <button class="btn btn-sm btn-dark" type="button" data-appsec-preset="full"><i class="bi bi-bullseye me-1"></i>Full AppSec</button>
+              <button class="btn btn-sm btn-outline-dark" type="button" data-appsec-preset="stealth"><i class="bi bi-moon-stars me-1"></i>Stealth</button>
+            </div>
+          </div>
+          {% for category in web_appsec_module_groups %}
+            <details class="appsec-category" {% if forloop.first %}open{% endif %}>
+                <summary>
+                  <span class="summary-left">
+                    <span class="summary-icon"><i class="bi {{ category.icon }}"></i></span>
+                    <span>{{ category.name }}</span>
+                  </span>
+                  <i class="bi bi-chevron-down text-muted"></i>
+                </summary>
+                <div class="appsec-module-grid">
+                  {% for module in category.modules %}
+                    <article class="appsec-module-card">
+                      <div class="appsec-module-head">
+                        <div class="d-flex gap-2">
+                          <div class="form-check form-switch appsec-switch">
+                            <input class="form-check-input" type="checkbox" name="web_appsec_modules" value="{{ module.key }}" id="module_{{ module.key }}" {% if module.key in selected_web_appsec_modules %}checked{% endif %}>
+                          </div>
+                          <div>
+                            <label class="appsec-module-title mb-0" for="module_{{ module.key }}">{{ module.label }}</label>
+                          </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                          <span class="appsec-severity appsec-severity-{{ module.severity }}">{{ module.severity }}</span>
+                          <i class="bi bi-info-circle appsec-tooltip" title="Qué hace: {{ module.description }} | Herramienta: {{ module.tool }} | Impacto: {{ module.impact }}"></i>
+                        </div>
+                      </div>
+                      <div class="appsec-module-desc">{{ module.description }}</div>
+                      <div class="appsec-module-meta"><strong>Tool:</strong> {{ module.tool }}</div>
+                      <div class="appsec-module-meta"><strong>Impacto:</strong> {{ module.impact }}</div>
+                    </article>
+                  {% endfor %}
+                </div>
+            </details>
+          {% endfor %}
         </div>
         {{ form.web_appsec_modules.errors }}
       </div>
@@ -111,4 +182,36 @@
     </form>
   </div>
 </div>
+<script>
+  (() => {
+    const checkboxes = Array.from(document.querySelectorAll('input[name="web_appsec_modules"]'));
+    if (!checkboxes.length) return;
+
+    const updateState = (values) => {
+      const selected = new Set(values);
+      checkboxes.forEach((checkbox) => {
+        checkbox.checked = selected.has(checkbox.value);
+      });
+    };
+
+    const presets = {
+      quick: ['xss', 'sqli', 'csrf', 'misconfig'],
+      full: [{% for module in web_appsec_all_modules %}'{{ module }}'{% if not forloop.last %}, {% endif %}{% endfor %}],
+      stealth: ['endpoint_discovery', 'misconfig', 'csrf'],
+    };
+
+    document.querySelectorAll('[data-appsec-action="select-all"]').forEach((button) => {
+      button.addEventListener('click', () => updateState(checkboxes.map((checkbox) => checkbox.value)));
+    });
+    document.querySelectorAll('[data-appsec-action="clear-all"]').forEach((button) => {
+      button.addEventListener('click', () => updateState([]));
+    });
+    document.querySelectorAll('[data-appsec-preset]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const preset = button.getAttribute('data-appsec-preset');
+        updateState(presets[preset] || []);
+      });
+    });
+  })();
+</script>
 {% endblock %}

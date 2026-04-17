@@ -16,7 +16,15 @@ from accounts.tenancy import TenantQuerysetMixin, get_active_organization
 from core.tenant_api import TenantModelViewSetMixin
 from dashboard.reports import build_scan_report_pdf
 
-from .forms import CreateScanForm, PROFILE_NAME_ALIASES, SCAN_TYPE_HELP, SCAN_TYPE_TO_PROFILE
+from .forms import (
+    CreateScanForm,
+    PROFILE_NAME_ALIASES,
+    SCAN_TYPE_HELP,
+    SCAN_TYPE_TO_PROFILE,
+    WEB_APPSEC_MODULE_CHOICES,
+    WEB_APPSEC_MODULE_DETAILS,
+    WEB_APPSEC_MODULE_GROUPS,
+)
 from .models import ScanExecution
 from .serializers import ScanExecutionSerializer
 from .tasks import run_scan_task
@@ -68,8 +76,41 @@ class ScanCreateView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         org = self._get_org()
         form = kwargs.get('form') or self._build_form(org)
+        module_labels = dict(WEB_APPSEC_MODULE_CHOICES)
+        grouped_modules = []
+        selected_modules = form['web_appsec_modules'].value() or []
+        if isinstance(selected_modules, str):
+            selected_modules = [selected_modules]
+        for group in WEB_APPSEC_MODULE_GROUPS:
+            modules = []
+            for module_key in group.get('modules', []):
+                if module_key not in module_labels:
+                    continue
+                module_details = WEB_APPSEC_MODULE_DETAILS.get(module_key, {})
+                modules.append(
+                    {
+                        'key': module_key,
+                        'label': module_labels[module_key],
+                        'description': module_details.get('description', ''),
+                        'tool': module_details.get('tool', 'N/A'),
+                        'impact': module_details.get('impact', ''),
+                        'severity': module_details.get('severity', 'medium'),
+                    }
+                )
+            if modules:
+                grouped_modules.append(
+                    {
+                        'id': group.get('id', ''),
+                        'name': group.get('name', ''),
+                        'icon': group.get('icon', 'bi-grid'),
+                        'modules': modules,
+                    }
+                )
         context['form'] = form
         context['scan_type_help'] = SCAN_TYPE_HELP
+        context['web_appsec_module_groups'] = grouped_modules
+        context['web_appsec_all_modules'] = [key for key, _ in WEB_APPSEC_MODULE_CHOICES]
+        context['selected_web_appsec_modules'] = selected_modules
         return context
 
     def post(self, request, *args, **kwargs):
