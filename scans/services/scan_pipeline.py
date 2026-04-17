@@ -128,10 +128,11 @@ class ScanPipelineExecutionError(RuntimeError):
 
 
 class ScanPipelineService:
-    def __init__(self) -> None:
+    def __init__(self, progress_callback=None) -> None:
         self.nmap_runner = NmapRunner()
         self.nmap_parser = NmapXmlParser()
         self.external_runner = ExternalToolRunner()
+        self.progress_callback = progress_callback
 
     def execute(self, scan: ScanExecution) -> ScanPipelineResult:
         requested_scan_type = (scan.engine_metadata or {}).get('requested_scan_type') or 'nmap_discovery'
@@ -141,8 +142,13 @@ class ScanPipelineService:
             return self._run_web_pipeline(scan, requested_scan_type)
         return self._run_infra_pipeline(scan, 'nmap_discovery')
 
+    def _notify_progress(self, stage: str, percent: int, message: str = '') -> None:
+        if callable(self.progress_callback):
+            self.progress_callback(stage, percent, message)
+
     def _run_infra_pipeline(self, scan: ScanExecution, scan_type: str) -> ScanPipelineResult:
         profile = NMAP_PROFILE_BY_SCAN_TYPE.get(scan_type, 'discovery')
+        self._notify_progress('discovery', 15, 'Descubriendo servicios con Nmap')
         run_result = self.nmap_runner.run(target=scan.asset.value, profile=profile)
         try:
             parsed_output, parse_metadata = self._parse_infra_output(run_result.xml_output)
@@ -172,6 +178,7 @@ class ScanPipelineService:
                 reason='nmap_timeout' if timed_out else 'nmap_runtime_error',
             )
 
+        self._notify_progress('service_detection', 45, 'Procesando servicios detectados')
         with transaction.atomic():
             for parsed_host in parsed_output.hosts:
                 RawEvidence.objects.create(
@@ -208,6 +215,7 @@ class ScanPipelineService:
                         banner=parsed_service.banner,
                         scripts=[vars(script) for script in parsed_service.scripts],
                     )
+        self._notify_progress('version_detection', 65, 'Normalizando versiones y banners')
 
         summary = {
             'scan_type': scan_type,
@@ -240,6 +248,7 @@ class ScanPipelineService:
                 'partial_result': timed_out or bool(parse_metadata.get('recovered_partial_xml')),
             },
         }
+        self._notify_progress('enrichment', 82, 'Consolidando evidencia de infraestructura')
         return ScanPipelineResult(summary=summary, command_executed=run_result.command, engine_metadata=metadata)
 
     def _parse_infra_output(self, xml_output: str | bytes | None) -> tuple[Any, dict[str, Any]]:
@@ -322,6 +331,7 @@ class ScanPipelineService:
         appsec_requested = self._resolve_web_appsec_configuration(scan, scan_type)
         appsec_controls = appsec_requested.get('controls', {})
 
+        self._notify_progress('http_probe', 15, 'Validando conectividad HTTP/S')
         normalized_target, probe_result = self._resolve_web_target(raw_target)
         target = normalized_target
         headers.update(probe_result.get('headers') or {})
@@ -410,6 +420,7 @@ class ScanPipelineService:
             return True
 
         # 1) Fingerprinting
+        self._notify_progress('fingerprint', 35, 'Ejecutando fingerprint de tecnologías')
         whatweb = self.run_whatweb(target)
         if _record_module('whatweb', whatweb, required=True):
             ww_payload = parse_whatweb_json(whatweb.stdout)
@@ -444,6 +455,7 @@ class ScanPipelineService:
             fingerprint = {}
 
         # 2) Enumeración
+        self._notify_progress('endpoint_discovery', 55, 'Descubriendo endpoints y superficies expuestas')
         preferred_enum_tool = 'ffuf' if scan_type in {'web_api', 'web_full'} else 'gobuster'
         fallback_enum_tool = 'gobuster' if preferred_enum_tool == 'ffuf' else 'ffuf'
         enum_tool = preferred_enum_tool
@@ -569,6 +581,7 @@ class ScanPipelineService:
         interpreted_headers = self._interpret_headers(headers)
 
         # 3) Vulnerabilidades
+        self._notify_progress('vulnerability_checks', 76, 'Ejecutando validaciones de vulnerabilidades')
         run_nuclei = scan_type in {'web_basic', 'web_full', 'web_appsec', 'web_misconfig', 'web_api'}
         nuclei_required = scan_type in {'web_full', 'web_misconfig'}
         if run_nuclei:
@@ -680,6 +693,7 @@ class ScanPipelineService:
             cms=cms,
         )
         web_findings_all = self._merge_web_findings(web_enterprise_findings, web_basic_findings)
+        self._notify_progress('reporting', 86, 'Consolidando hallazgos web')
 
         if not tools_executed:
             warnings.append('No hubo herramientas externas exitosas; se devuelve resultado parcial usando HTTP probe/headers.')
