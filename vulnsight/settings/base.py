@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'knowledge_base',
     'findings',
     'dashboard',
+    'ultrifire',
 ]
 
 MIDDLEWARE = [
