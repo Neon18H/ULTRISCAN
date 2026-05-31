@@ -21,6 +21,5 @@ urlpatterns = [
     path('accounts/', include('accounts.urls')),
     path('api/', include(router.urls)),
     path('api/dashboard/summary/', DashboardSummaryView.as_view(), name='dashboard-summary'),
-    path('ultrifire/', include('ultrifire.urls')),
     path('', include('dashboard.urls')),
 ]
